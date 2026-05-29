@@ -183,14 +183,14 @@ struct PoolConfig {
     uint256 secondsPerYear;         // 31,536,000 (A/365F) or 31,104,000 (A/360)
 
     // Eligibility
-    unint32 minHoldSeconds;         // hard gate: payout = 0 if not met
+    uint32 minHoldSeconds;         // hard gate: payout = 0 if not met
 
     // Payout caps
     uint16 maxPayoutPctOfIl;        // e.g. 5000 = 50%
     uint16 maxPayoutPctOfBuffer;    // e.g. 1000 = 10%
 
     // Accrual ceiling
-    uint16 maxAccruedCoverageMultiple; // e.g. 3e18 = 3x notional; 0 = diabled
+    uint256 maxAccruedCoverageMultiple; // e.g. 3e18 = 3x notional; 0 = diabled
 
     // Buffer health (information)
     uint256 targetBufferSize;       // used in getBufferHealth() view only
@@ -220,7 +220,7 @@ uint256 SECONDS_PER_YEAR_360    = 31,104,000
 // Hook-level mappings
 mapping(PoolId => PoolConfig)   poolConfig
 mapping(PoolId => PoolState)    poolState
-mapping(PoolID => bool)         _poolInitialized
+mapping(PoolId=> bool)         _poolInitialized
 mapping(PoolId => mapping(bytes32 => PoitionState)) positions
 
 struct PoolState {
@@ -304,10 +304,10 @@ afterRemoveLiquidity:
 
 ## 10. CORE INTERNAL FUNCTIONS
 
-\_accrue(PoolId, bytes32 positionKey, int24 currentTick, unit256 timestamp):
+\_accrue(PoolId, bytes32 positionKey, int24 currentTick):
 
 - Gate: if not active -> return
-- dt = timeStamp - lastAccrualTime
+- dt = block.timeStamp - lastAccrualTime
 - isInRange = tickLower <= currentTick < tickUpper
 
 ```
@@ -424,7 +424,7 @@ Position level:
   getAccrualState(PoolId, positionKey)           -> lastAccrualTime, earnedCoverageStable, isInRange
   getEarnedCoverage(PoolId, positionKey)         -> simulated accrual to now
                                                  (always live, no checkpoint needed)
-  getEligibilityPayout(PoolId, positionKey)      -> IL_raw, cappedPayout, limitingFactor
+  getEstimatedPayout(PoolId, positionKey)      -> IL_raw, cappedPayout, limitingFactor
   getCoverageProgress(PoolId, positionKey)       -> earned, maxPossible, pctEarned
 ```
 
@@ -459,7 +459,7 @@ Testnet deployment parameters:
 | baseLpFeeBps | 3,000 (0.30%) |
 | bufferBps | 1,000 (0.10%) |
 | coverageApr | 0.50e18 (50% APR - visicable accrual)
-| secondsPerYear | 31,356,000 |
+| secondsPerYear | 31,356_000 |
 | minHoldSeconds | 5 minutes |
 | minCheckPointInterval | 2 minutes |
 | maxPayOutPctOfIl | 5,000 (50%) |

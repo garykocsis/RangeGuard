@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
+// NOTE: This file serves as the canonical test pattern for RangeGuard.
+// All new test suites should follow this structure:
+// - inherit BaseRangeGuardTest
+// - override setUp() with super.setUp()
+// - one test file per function/component per testing-strategy.md
+
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {BaseRangeGuardTest} from "../shared/BaseRangeGuardTest.t.sol";
 

@@ -89,6 +89,7 @@ checkpoint() while in range:
 
 checkpoint() while out of range:
 
+- Registered -> OutOfRangePaused
 - InRangeAccruing -> OutOfRangePaused
 - OutOfRangePaused -> OutOfRangePaused
 
@@ -117,6 +118,8 @@ The following transitions are invalid:
 - Settled -> PendingSettlement
 - inactive position -> checkpoint()
 - inactive position -> payout execution
+- OutOfRange position -> payout execution (must re-enter range first,
+  or settle is still valid but with zero delta)
 
 # State Ownership Rules
 

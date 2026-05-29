@@ -342,6 +342,7 @@ Examples:
 
 ## Unit Test Suites
 
+- RangeGuardHook.t.sol ← hook-level tests (permissions, initialization)
 - Accrue.t.sol
 - ComputeIL.t.sol
 - ComputePayout.t.sol

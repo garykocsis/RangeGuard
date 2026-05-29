@@ -139,7 +139,7 @@ struct PoolConfig{
     uint256 maxAccruedCoverageMultiple  // e.g. 3e18 = 3x entryNotional; 0 = disabled
 
     // Buffer health (informational)
-    uint246 targetBufferSize;    // Actuarial target, used in getBufferHealth()
+    uint256 targetBufferSize;    // Actuarial target, used in getBufferHealth()
 
     // Checkpoint rate limiting (per pool)
     uint32 minCheckpointInterval;    // e.g. 2 minute demo / 1 hour mainnet
@@ -158,7 +158,7 @@ uint24 constant MAX_BUFFER_BPS = 5_000;
 uint256 constant MAX_COVERAGE_APR = 0.50e18;  
 uint16 constant MAX_PAYOUT_PCT = 10_000;  
 uint32 constant MAX_HOLD_SECONDS = 365 days;  
-uint256 constant SECONDS_PER_YEAR_365F = 31,536_000;
+uint256 constant SECONDS_PER_YEAR_365F = 31_536_000;
 uint256 constant SECONDS_PER_YEAR_360 = 31_104_000;
 
 ### Initialization Function
@@ -175,13 +175,13 @@ function initializePoolConfig(
         if (cfg.coverageApr > MAX_COVERAGE_APR) revert InValidApr();
         if (cfg.coverageApr == 0) revert InvalidApr();
         if (cfg.maxPayoutPctOfIl > MAX_PAYOUT_PCT) revert InvalidPayoutCaps();
-        if (cfg.maxPayoutPctOfBuffer >> MAX_PAYOUT_PCT) revert InvalidPayoutCaps();
+        if (cfg.maxPayoutPctOfBuffer > MAX_PAYOUT_PCT) revert InvalidPayoutCaps();
         require(
             cfg.secondsPerYear == SECONDS_PER_YEAR_365F ||
             cfg.secondsPerYear == SECONDS_PER_YEAR_360,
             "unsupported day_count"
         );
-        poolConfig([poolId]) =  cfg;
+        poolConfig[poolId] =  cfg;
         _poolInitialized[poolId] = true;
         emit PoolConfigInitialized(poolId, cfg);
     }
@@ -195,8 +195,8 @@ function initializePoolConfig(
 mapping(PoolId => PoolConfig)           public poolConfig;
 mapping(PoolId => PoolState)            public poolState;
 mapping(PoolId => bool)                 private _poolInitialized;
-mapping(Poolid => mappings(bytes32 => PositionState)) public positions;
-mapping(Poolid => address)              piblice reactiveContract;
+mapping(PoolId => mappings(bytes32 => PositionState)) public positions;
+mapping(PoolId => address)              public reactiveContract;
 ```
 
 ### PositionStateStruct
@@ -269,15 +269,14 @@ Case C (price above range): entryAmt0, notional = entryAmt1
 function  _accrue(
     PoolId poolId,
     bytes32 positionKey,
-    int24 currentTick,
-    uint256 timeStamp
-) internal {
+    int24 currentTick
+   ) internal {
     PositionState storage pos = position[poolId][positionkey];
     PoolConfig storage cfg = poolConfig[poolId];
 
     if(!pos.active) return;
 
-    uint256 dt = timestamp - pos.lastAccrualTime;
+    uint256 dt = block.timestamp - pos.lastAccrualTime;
     bool isInRange = pos.tickLower <= currentTick && currentTick < pos.tickUpper;
     uint256 delta = 0;
 
@@ -296,7 +295,7 @@ function  _accrue(
         }
     }
 
-    pos.lastAcctualTime = uint32(timnestamp);
+    pos.lastAccrualTime = uint32(timestamp);
 
     emit accrualUpdated(
         poolId,
@@ -320,7 +319,7 @@ function _computeIL(
    int24 exitTick
  ) internal view returns (uint256 IL_raw) {
        uint256 P_exit = tickToPrice(exitTick); // USDC Per Eth, decimal adjusted
-       uint256 V_HODL = pos_entryAmt1 + (uint256(pos.entryAmt0) * P_exit / PRICE_PRECISION);
+       uint256 V_HODL = pos.entryAmt1 + (uint256(pos.entryAmt0) * P_exit / PRICE_PRECISION);
        uint256 V_actual = uint256(outAmt1) + (uint256(outAmt0) * P_exit / PRICE_PRECISION);
        IL_raw = V_HODL > V_actual ? V_HODL - V_actual: 0;
    }
