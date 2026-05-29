@@ -3,34 +3,23 @@ pragma solidity 0.8.26;
 
 import {BaseHook} from "v4-hooks-public/src/base/BaseHook.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {PoolIdLibrary, PoolId} from "v4-core/types/PoolId.sol";
-import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
-import {TickMath} from "v4-core/libraries/TickMath.sol";
-import {Position} from "v4-core/libraries/Position.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 import {ModifyLiquidityParams, SwapParams} from "v4-core/types/PoolOperation.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
-
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
-
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 
 contract RangeGuardHook is BaseHook {
-    using PoolIdLibrary for PoolKey;
-    using StateLibrary for IPoolManager;
-
     /*//////////////////////////////////////////////////////////////
                                 Storage
     //////////////////////////////////////////////////////////////*/
 
-    IPoolManager public immutable manager;
+    IPoolManager public immutable i_manager;
 
     constructor(IPoolManager _manager) BaseHook(_manager) {
-        manager = _manager;
+        i_manager = _manager;
     }
 
-    // Set up hook permissions to return `true`
-    // for the two hook functions we are using
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
             beforeInitialize: true,

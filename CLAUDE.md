@@ -78,6 +78,8 @@ Upcoming implementation order:
 - Use NatSpec comments for all external/public functions
 - Keep functions focused and single-responsibility
 - Avoid duplicated accounting logic
+- prefix immutable variables with i\_ example i_manager
+- Constants should be all upper case
 
 ---
 
@@ -116,6 +118,12 @@ For section header use the following for an example
 ```
 
 Replace header description with the actual description - for example EVENTS
+
+```
+ /*//////////////////////////////////////////////////////////////
+                                 EVENTS
+    //////////////////////////////////////////////////////////////*/
+```
 
 # Hook Architecture Expectations
 
