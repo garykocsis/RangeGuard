@@ -17,8 +17,14 @@ contract DeployRangeGuardHook is Script {
     // https://getfoundry.sh/guides/deterministic-deployments-using-create2/#getting-started
     address internal constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
 
+    // Well-known public Anvil dev account #0. Used only as a fallback so tests and
+    // local runs work with zero setup; real deployments override via PRIVATE_KEY env.
+    uint256 internal constant DEFAULT_ANVIL_PK = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+
     function run() external returns (RangeGuardHook) {
-        uint256 pk = vm.envUint("PRIVATE_KEY");
+        // envOr keeps the canonical deploy flow usable in CI / fresh clones (no secret
+        // required) while still honoring a real PRIVATE_KEY when one is set.
+        uint256 pk = vm.envOr("PRIVATE_KEY", DEFAULT_ANVIL_PK);
 
         // 1. Initialize the deployment config helper
         HelperConfig helperConfig = new HelperConfig();

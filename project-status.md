@@ -1,224 +1,93 @@
 # RangeGuard Project Status
 
-Last Updated: 2026-05-28
+Last Updated: 2026-05-29
 
-## Current Phase
+## How to use this file
 
-Current Task:
-
-- Implement \_accrue()
-
-Status:
-
-- Design Review Complete
-- Implementation Not Started
-
----
-
-# Core Protocol Development
-
-## \_accrue()
-
-Status: IN PROGRESS
-
-### Design
-
-- [x] Architecture review
-- [x] Storage review
-- [x] Edge cases identified
-- [x] Invariants identified
-
-### Implementation
-
-- [ ] Implement \_accrue()
-
-### Unit Tests
-
-- [ ] Create test suite
-- [ ] dt = 0
-- [ ] in range accrual
-- [ ] out of range accrual
-- [ ] boundary tick behavior
-
-### Fuzz Tests
-
-- [ ] coverage monotonic
-- [ ] larger notional => larger accrual
-- [ ] out of range => zero accrual
-
-### Invariant Tests
-
-- [ ] accrued coverage never decreases
-- [ ] timestamp monotonic
-- [ ] entry snapshots immutable
+- The **Roadmap** is the single source of truth for progress — one checkbox per item.
+- **Now** holds the active target plus its granular impl/unit/fuzz/invariant sub-status.
+  Only the in-progress item is tracked at that granularity here.
+- **Completed** items collapse to one line and link to a `docs/` session doc for detail,
+  instead of repeating per-item checklists.
+- Each session: update **Now**, tick the **Roadmap**, refresh the date. Do not duplicate
+  status across sections.
+- Per-function build order (mandatory, per CLAUDE.md): implement -> unit -> fuzz ->
+  invariant; correctness before gas.
 
 ---
 
-## \_computeIL()
+## Now
 
-Status: NOT STARTED
-
-### Design
-
-- [ ] Architecture review
-
-### Implementation
-
-- [ ] Implement \_computeIL()
-
-### Testing
-
-- [ ] Unit tests
-- [ ] Fuzz tests
-- [ ] Invariant tests
+- **Active target:** \_computeIL()
+- **Needs a design pass first** — pulls in deferred Risk 6 work: tickToPrice() and
+  ETH(18)/USDC(6) decimal adjustment. (See docs/session1-accrue-decisions.md Risk 6.)
+- Progress: [ ] design  [ ] implement  [ ] unit  [ ] fuzz  [ ] invariant
+- **Tests:** 32 passing, 0 failing (1 permissions + 17 unit + 8 fuzz @1000 runs +
+  6 invariant @500x100, 0 reverts).
 
 ---
 
-## \_computePayout()
+## Completed
 
-Status: NOT STARTED
-
-### Design
-
-- [ ] Architecture review
-
-### Implementation
-
-- [ ] Implement \_computePayout()
-
-### Testing
-
-- [ ] Unit tests
-- [ ] Fuzz tests
-- [ ] Invariant tests
+- **\_accrue()** — engine + shared pure helper \_accrueEarned(), supporting state
+  (PoolConfig/PoolState/PositionState, mappings, AccrualUpdated), full test suite.
+  -> docs/session-2-accrue-complete.md, docs/session1-accrue-decisions.md
+- **Scaffold & infra** — hook skeleton, getHookPermissions(), deploy scripts
+  (DeployRangeGuardHook.s.sol, HelperConfig.s.sol), BaseRangeGuardTest, RangeGuardHookHarness,
+  DYNAMIC_FEE_FLAG enforcement, documentation system.
 
 ---
 
-# Hook Callbacks
+## Roadmap
 
-## beforeInitialize()
+### Phase 1: Core Accounting Primitives
 
-Status: PARTIAL
+- [x] \_accrue() (impl + unit + fuzz + invariant)
+- [ ] \_computeIL() <- NEXT (needs design pass: tickToPrice + decimal adjustment)
+- [ ] \_computePayout() (three-cap logic + LimitingFactor)
 
-## afterAddLiquidity()
+### Phase 2: Hook Callbacks
 
-Status: PARTIAL
+All currently PARTIAL — selector-returning skeletons only; no logic wired.
 
-## beforeSwap()
+- [ ] beforeInitialize() (config decode + DYNAMIC_FEE_FLAG enforcement)
+- [ ] afterAddLiquidity() (register position, baseline \_accrue())
+- [ ] beforeSwap() (return derived dynamic fee)
+- [ ] afterSwap() (buffer funding + TickUpdated; no accrual)
+- [ ] beforeRemoveLiquidity() (eligibility -> \_accrue -> \_computeIL -> \_computePayout)
+- [ ] afterRemoveLiquidity() (execute payout, update buffer, clear state)
 
-Status: PARTIAL
-
-## afterSwap()
-
-Status: PARTIAL
-
-## beforeRemoveLiquidity()
-
-Status: PARTIAL
-
-## afterRemoveLiquidity()
-
-Status: PARTIAL
-
----
-
-# Testing Infrastructure
-
-## Deployment Framework
-
-Status: COMPLETE
-
-- [x] DeployRangeGuardHook.s.sol
-- [x] HelperConfig.s.sol
-
-## Shared Test Harness
-
-Status: COMPLETE
-
-- [x] BaseRangeGuardTest
-
----
-
-# Recently Completed
-
-- Hook scaffold created
-- getHookPermissions() implemented in test/unit/RangeGuardTest.t
-- Deployment scripts created
-- BaseRangeGuardTest created
-- PoolConfig initialization moved to beforeInitialize()
-- DYNAMIC_FEE_FLAG enforcement added
-- Documentation system established
-
----
-
-# Next Actions
-
-1. Implement \_accrue()
-2. Write \_accrue() unit tests
-3. Write \_accrue() fuzz tests
-4. Write \_accrue() invariant tests
-5. Begin \_computeIL()
-
-# Development Roadmap
-
-## Phase 1: Core Accounting Primitives
-
-- [ ] \_accrue()
-- [ ] \_accrue() unit tests
-- [ ] \_accrue() fuzz tests
-- [ ] \_accrue() invariant tests
-
-- [ ] \_computeIL()
-- [ ] \_computeIL() unit tests
-- [ ] \_computeIL() fuzz tests
-- [ ] \_computeIL() invariant tests
-
-- [ ] \_computePayout()
-- [ ] \_computePayout() unit tests
-- [ ] \_computePayout() fuzz tests
-- [ ] \_computePayout() invariant tests
-
-## Phase 2: Hook Callback Implementation
-
-- [ ] beforeInitialize()
-- [ ] beforeInitialize() tests
-
-- [ ] afterAddLiquidity()
-- [ ] afterAddLiquidity() tests
-
-- [ ] beforeSwap()
-- [ ] beforeSwap() tests
-
-- [ ] afterSwap()
-- [ ] afterSwap() tests
-
-- [ ] beforeRemoveLiquidity()
-- [ ] beforeRemoveLiquidity() tests
-
-- [ ] afterRemoveLiquidity()
-- [ ] afterRemoveLiquidity() tests
-
-## Phase 3: Integration Testing
+### Phase 3: Integration Testing
 
 - [ ] Full LP lifecycle
 - [ ] Coverage accrual lifecycle
 - [ ] Buffer funding lifecycle
 - [ ] Settlement lifecycle
 
-## Phase 4: Protocol Invariants
+### Phase 4: Protocol Invariants (cross-cutting)
 
-- [ ] Accounting invariants
+- [ ] Accounting invariants (partial: coverage accounting done with \_accrue())
 - [ ] Lifecycle invariants
 - [ ] Settlement invariants
 - [ ] Authorization invariants
 
-## Phase 5: Deployment Readiness on Anvil
+### Phase 5: Deployment Readiness on Anvil
 
 - [ ] Anvil deployment
 - [ ] Security review
 
-## Phase 6: Deployment Readiness on Sepolia
+### Phase 6: Deployment Readiness on Sepolia
 
 - [ ] Sepolia deployment
 - [ ] Security review
 - [ ] Mainnet readiness review
+
+---
+
+## Testing Infrastructure
+
+Status: COMPLETE
+
+- Deployment: DeployRangeGuardHook.s.sol, HelperConfig.s.sol
+- Shared harness: BaseRangeGuardTest (canonical deployment for all suites)
+- Internal-access harness: RangeGuardHookHarness (seeders + exposed internals; test-only)

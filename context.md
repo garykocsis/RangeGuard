@@ -356,7 +356,7 @@ checkpoint(POOLId pooliId, bytes32 positionKey):
 
 - Permissionless, one position per call
 - Required dt > = minCheckpointInterval (from PoolConfig, per pool)
-- Call \_accrue() with current tick and block.timestamp
+- Call \_accrue(poolId, positionKey, currentTick) - 3 args; uses block.timestamp internally
 - Emit AccrualUpdated (and optionally Checkpointed)
 
 Reactive Contract responsibilities:  

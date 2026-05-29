@@ -3,22 +3,125 @@ pragma solidity 0.8.26;
 
 import {BaseHook} from "v4-hooks-public/src/base/BaseHook.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {PoolId} from "v4-core/types/PoolId.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 import {ModifyLiquidityParams, SwapParams} from "v4-core/types/PoolOperation.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 
+/// @title RangeGuardHook
+/// @notice Uniswap v4 hook providing native impermanent-loss coverage for LPs,
+///         funded by dynamic-fee skimming and paid out on full withdrawal.
+/// @dev    Coverage accrual is lazy and range-gated. This revision implements the
+///         core accrual primitive (`_accrue`) and the shared accrual math helper
+///         (`_accrueEarned`) together with the minimum state required to support them.
 contract RangeGuardHook is BaseHook {
     /*//////////////////////////////////////////////////////////////
-                                Storage
+                              TYPE DECLARATIONS
     //////////////////////////////////////////////////////////////*/
 
+    /// @notice Immutable configuration for a single pool, set once at initialization.
+    /// @dev    All Bps values use a 10,000 denominator; APR uses 1e18 fixed-point.
+    struct PoolConfig {
+        // Fees
+        uint24 baseLpFeeBps; // LP fee portion, e.g. 3000 = 0.30%
+        uint24 bufferBps; // Buffer fee portion, e.g. 1000 = 0.10%
+        // dynamicFeeBps = baseLpFeeBps + bufferBps (always derived, never stored)
+        // Coverage accrual
+        uint256 coverageApr; // 1e18 fixed-point, e.g. 0.10e18 = 10%
+        uint256 secondsPerYear; // A/365F = 31_536_000 | A/360 = 31_104_000
+        // Eligibility
+        uint32 minHoldSeconds; // Hard gate: payout = 0 if not met
+        // Payout caps
+        uint16 maxPayoutPctOfIl; // Cap 1: % of IL covered, e.g. 5000 = 50%
+        uint16 maxPayoutPctOfBuffer; // Cap 3: % of buffer, e.g. 1000 = 10%
+        // Accrual ceiling
+        uint256 maxAccruedCoverageMultiple; // e.g. 3e18 = 3x entryNotional; 0 = disabled
+        // Buffer health (informational)
+        uint256 targetBufferSize; // Actuarial target, used in getBufferHealth()
+        // Checkpoint rate limiting (per pool)
+        uint32 minCheckpointInterval; // e.g. 2 min demo / 1 hour mainnet
+        // Admin
+        address admin; // seedBuffer() only; no parameter changes
+    }
+
+    /// @notice Mutable pool-level buffer accounting.
+    struct PoolState {
+        uint256 bufferBalanceStable; // Current buffer (stable units)
+        uint256 totalSkimmedStable; // Cumulative buffer funded from fees
+        uint256 totalPaidOutStable; // Cumulative payouts
+    }
+
+    /// @notice Per-position lifecycle and accrual state.
+    /// @dev    Field order is chosen for storage packing: the snapshot amounts fill
+    ///         one slot, and the small lifecycle fields share a single slot.
+    struct PositionState {
+        // Snapshot - set once at deposit, never mutated (slot 0)
+        uint128 entryAmt0; // token0 (volatile) amount at deposit
+        uint128 entryAmt1; // token1 (stable) amount at deposit
+        // Snapshot + accrual lifecycle fields (slot 1, packed)
+        int24 entryTick; // Pool tick at deposit
+        int24 tickLower; // Position lower tick bound
+        int24 tickUpper; // Position upper tick bound
+        uint32 depositTime; // block.timestamp at deposit
+        uint32 lastAccrualTime; // Timestamp of last accrual update
+        bool active; // true = registered, false = cleared
+        // Accrual / settlement (own slots)
+        uint256 entryNotionalStable; // entryAmt1 + entryAmt0 * P_entry (stable)
+        uint256 earnedCoverageStable; // Cumulative coverage earned (stable)
+        uint256 pendingPayout; // Computed payout awaiting execution
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                               STATE VARIABLES
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Fixed-point precision for APR and accrual-multiple math (1e18).
+    uint256 internal constant APR_PRECISION = 1e18;
+
+    /// @notice The Uniswap v4 PoolManager this hook is bound to.
     IPoolManager public immutable i_manager;
+
+    /// @notice Immutable per-pool configuration, keyed by PoolId.
+    mapping(PoolId => PoolConfig) public poolConfig;
+
+    /// @notice Per-position state, scoped by pool then position key.
+    mapping(PoolId => mapping(bytes32 => PositionState)) public positions;
+
+    /*//////////////////////////////////////////////////////////////
+                                   EVENTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Emitted on every `_accrue()` call for an active position.
+    /// @param poolId          Pool the position belongs to.
+    /// @param positionKey     Position identifier within the pool.
+    /// @param dt              Seconds elapsed since the previous accrual.
+    /// @param delta           Coverage actually added this accrual (post-ceiling clamp).
+    /// @param newEarnedTotal  Cumulative earned coverage after this accrual.
+    /// @param isInRange       Whether the position was in range for this accrual.
+    /// @param timestamp       block.timestamp at which accrual was evaluated.
+    event AccrualUpdated(
+        PoolId indexed poolId,
+        bytes32 indexed positionKey,
+        uint256 dt,
+        uint256 delta,
+        uint256 newEarnedTotal,
+        bool isInRange,
+        uint256 timestamp
+    );
+
+    /*//////////////////////////////////////////////////////////////
+                                 FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
 
     constructor(IPoolManager _manager) BaseHook(_manager) {
         i_manager = _manager;
     }
+
+    /*//////////////////////////////////////////////////////////////
+                             EXTERNAL / PUBLIC
+    //////////////////////////////////////////////////////////////*/
 
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
@@ -38,6 +141,10 @@ contract RangeGuardHook is BaseHook {
             afterRemoveLiquidityReturnDelta: false
         });
     }
+
+    /*//////////////////////////////////////////////////////////////
+                                 INTERNAL
+    //////////////////////////////////////////////////////////////*/
 
     function _beforeInitialize(address, PoolKey calldata, uint160) internal override returns (bytes4) {
         return this.beforeInitialize.selector;
@@ -87,5 +194,98 @@ contract RangeGuardHook is BaseHook {
         returns (bytes4, int128)
     {
         return (this.afterSwap.selector, 0);
+    }
+
+    /// @notice Lazily advances a single position's earned coverage to block.timestamp.
+    /// @dev    Range-gated and conservative: accrues only while active, in range, and
+    ///         when time has elapsed. Never iterates positions and never mutates the
+    ///         entry snapshot. Range status is derived from the supplied `currentTick`.
+    /// @param poolId       Pool the position belongs to.
+    /// @param positionKey  Position identifier within the pool.
+    /// @param currentTick  Current pool tick used to derive in-range status.
+    function _accrue(PoolId poolId, bytes32 positionKey, int24 currentTick) internal {
+        PositionState storage pos = positions[poolId][positionKey];
+
+        // Inactive positions never accrue.
+        if (!pos.active) return;
+
+        // Guard against underflow: fail safe to dt = 0 (no accrual) rather than revert.
+        uint256 last = pos.lastAccrualTime;
+        uint256 nowTs = block.timestamp;
+        uint256 dt = nowTs > last ? nowTs - last : 0;
+
+        // Range status derived from the current tick: [tickLower, tickUpper).
+        bool isInRange = pos.tickLower <= currentTick && currentTick < pos.tickUpper;
+
+        PoolConfig storage cfg = poolConfig[poolId];
+
+        (uint256 newEarned, uint256 appliedDelta) = _accrueEarned(
+            pos.earnedCoverageStable,
+            pos.entryNotionalStable,
+            cfg.coverageApr,
+            cfg.secondsPerYear,
+            cfg.maxAccruedCoverageMultiple,
+            dt,
+            isInRange
+        );
+
+        // Effects: only write coverage when it actually changed.
+        if (appliedDelta > 0) {
+            pos.earnedCoverageStable = newEarned;
+        }
+        // Advance the accrual clock whenever time elapsed, even while out of range,
+        // so paused seconds are consumed and never retroactively accrue.
+        if (dt > 0) {
+            pos.lastAccrualTime = uint32(nowTs);
+        }
+
+        emit AccrualUpdated(poolId, positionKey, dt, appliedDelta, newEarned, isInRange, nowTs);
+    }
+
+    /// @notice Pure accrual math + ceiling clamp shared by `_accrue()` and the live
+    ///         coverage view, guaranteeing the two can never drift.
+    /// @dev    Single-truncation form; integer division rounds down (conservative for
+    ///         insurance accounting). Returns the new earned total and the applied
+    ///         increment after the ceiling clamp.
+    /// @param currentEarned               Coverage earned so far (stable units).
+    /// @param entryNotionalStable         Position entry notional (stable units).
+    /// @param coverageApr                 Coverage APR, 1e18 fixed-point.
+    /// @param secondsPerYear              Day-count seconds per year.
+    /// @param maxAccruedCoverageMultiple  Ceiling multiple of notional (1e18); 0 disables.
+    /// @param dt                          Seconds elapsed since last accrual.
+    /// @param isInRange                   Whether the position is in range.
+    /// @return newEarned     Earned coverage after this accrual (clamped to ceiling).
+    /// @return appliedDelta  Coverage actually added (newEarned - currentEarned).
+    function _accrueEarned(
+        uint256 currentEarned,
+        uint256 entryNotionalStable,
+        uint256 coverageApr,
+        uint256 secondsPerYear,
+        uint256 maxAccruedCoverageMultiple,
+        uint256 dt,
+        bool isInRange
+    ) internal pure returns (uint256 newEarned, uint256 appliedDelta) {
+        // No accrual when out of range, no time elapsed, or nothing to accrue on.
+        if (!isInRange || dt == 0 || entryNotionalStable == 0 || coverageApr == 0) {
+            return (currentEarned, 0);
+        }
+
+        // delta = notional * APR * (dt / secondsPerYear), one truncation, rounds down.
+        uint256 rawDelta = (entryNotionalStable * coverageApr * dt) / (secondsPerYear * APR_PRECISION);
+        newEarned = currentEarned + rawDelta;
+
+        // Enforce the accrual ceiling when enabled.
+        if (maxAccruedCoverageMultiple > 0) {
+            uint256 cap = entryNotionalStable * maxAccruedCoverageMultiple / APR_PRECISION;
+            if (newEarned > cap) {
+                newEarned = cap;
+            }
+        }
+
+        // Coverage can never decrease; defensively clamp the applied delta to zero.
+        if (newEarned <= currentEarned) {
+            return (currentEarned, 0);
+        }
+        appliedDelta = newEarned - currentEarned;
     }
 }
