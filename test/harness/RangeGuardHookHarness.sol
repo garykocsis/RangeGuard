@@ -38,6 +38,20 @@ contract RangeGuardHookHarness is RangeGuardHook {
         _accrue(poolId, positionKey, currentTick);
     }
 
+    /// @notice Exposes the internal tick->price helper for direct unit testing.
+    function exposed_priceFromTick(int24 tick) external pure returns (uint256) {
+        return _priceFromTick(tick);
+    }
+
+    /// @notice Exposes the internal IL computation for direct unit testing.
+    function exposed_computeIL(PositionState memory pos, uint128 outAmt0, uint128 outAmt1, int24 exitTick)
+        external
+        pure
+        returns (uint256)
+    {
+        return _computeIL(pos, outAmt0, outAmt1, exitTick);
+    }
+
     /// @notice Returns the full stored PositionState for assertions.
     function getPosition(PoolId poolId, bytes32 positionKey) external view returns (PositionState memory) {
         return positions[poolId][positionKey];

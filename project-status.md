@@ -18,12 +18,15 @@ Last Updated: 2026-05-29
 
 ## Now
 
-- **Active target:** \_computeIL()
-- **Needs a design pass first** — pulls in deferred Risk 6 work: tickToPrice() and
-  ETH(18)/USDC(6) decimal adjustment. (See docs/session1-accrue-decisions.md Risk 6.)
-- Progress: [ ] design  [ ] implement  [ ] unit  [ ] fuzz  [ ] invariant
-- **Tests:** 32 passing, 0 failing (1 permissions + 17 unit + 8 fuzz @1000 runs +
-  6 invariant @500x100, 0 reverts).
+- **Active target:** \_computePayout() (next). \_computeIL() COMPLETE.
+- \_computeIL pricing: raw-ratio, decimal-agnostic (Risk 6 resolved). Shared
+  \_priceFromTick() helper (TickMath -> FullMath, raw token1/token0 x PRICE_PRECISION);
+  reused later by afterAddLiquidity for P_entry. Both functions pure. NatSpec documents
+  spot-price manipulation risk + rounding direction.
+- Progress (\_computeIL): [x] design [x] implement [x] unit [x] fuzz [x] invariant
+- **Tests:** 57 passing, 0 failing. \_computeIL: unit test/unit/ComputeIL.t.sol (14),
+  fuzz test/fuzz/ComputeILFuzz.t.sol (8 @1000 runs), invariant
+  test/invariant/SettlementInvariant.t.sol (3 @500x100, 0 reverts).
 
 ---
 
@@ -45,8 +48,8 @@ Last Updated: 2026-05-29
 ### Phase 1: Core Accounting Primitives
 
 - [x] \_accrue() (impl + unit + fuzz + invariant)
-- [ ] \_computeIL() <- NEXT (needs design pass: tickToPrice + decimal adjustment)
-- [ ] \_computePayout() (three-cap logic + LimitingFactor)
+- [x] \_computeIL() (impl + unit + fuzz + invariant; shared \_priceFromTick helper)
+- [ ] \_computePayout() <- NEXT (three-cap logic + LimitingFactor)
 
 ### Phase 2: Hook Callbacks
 

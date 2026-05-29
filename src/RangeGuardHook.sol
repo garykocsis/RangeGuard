@@ -9,6 +9,9 @@ import {ModifyLiquidityParams, SwapParams} from "v4-core/types/PoolOperation.sol
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {FullMath} from "v4-core/libraries/FullMath.sol";
+import {FixedPoint96} from "v4-core/libraries/FixedPoint96.sol";
 
 /// @title RangeGuardHook
 /// @notice Uniswap v4 hook providing native impermanent-loss coverage for LPs,
@@ -79,6 +82,12 @@ contract RangeGuardHook is BaseHook {
 
     /// @notice Fixed-point precision for APR and accrual-multiple math (1e18).
     uint256 internal constant APR_PRECISION = 1e18;
+
+    /// @notice Fixed-point precision for tick-derived prices (1e18).
+    /// @dev    Price is the raw token1/token0 ratio scaled by this factor, so that
+    ///         `rawToken0Amount * price / PRICE_PRECISION` yields raw token1 units.
+    ///         Token decimals are handled implicitly by the raw ratio (decimal-agnostic).
+    uint256 internal constant PRICE_PRECISION = 1e18;
 
     /// @notice The Uniswap v4 PoolManager this hook is bound to.
     IPoolManager public immutable i_manager;
@@ -287,5 +296,65 @@ contract RangeGuardHook is BaseHook {
             return (currentEarned, 0);
         }
         appliedDelta = newEarned - currentEarned;
+    }
+
+    /// @notice Converts a pool tick into a fixed-point price (raw token1 per raw token0).
+    /// @dev    Returns the raw token1/token0 ratio scaled by PRICE_PRECISION, so that
+    ///         `rawToken0Amount * price / PRICE_PRECISION` yields raw token1 (stable)
+    ///         units. Decimal-agnostic: token decimals are baked into the raw ratio, so
+    ///         no per-token decimal configuration is required. Shared by IL settlement
+    ///         and (later) entry-notional computation so the two cannot use divergent
+    ///         price conventions.
+    ///
+    ///         Rounding: both mulDiv steps truncate toward zero, so the price is rounded
+    ///         DOWN. This is applied consistently to V_HODL and V_actual in _computeIL().
+    ///
+    ///         Price source: this is the pool spot price derived from a single tick.
+    ///         Spot prices are manipulable within a transaction (e.g. flash-swap tick
+    ///         movement); MVP scope accepts this. A TWAP/oracle source is deferred to a
+    ///         later phase and should replace this for production hardening.
+    /// @param  tick      The pool tick to convert (must be within TickMath bounds).
+    /// @return priceX18  Raw token1/token0 ratio scaled by PRICE_PRECISION (1e18).
+    function _priceFromTick(int24 tick) internal pure returns (uint256 priceX18) {
+        uint160 sqrtPriceX96 = TickMath.getSqrtPriceAtTick(tick);
+        // raw ratio * 2^96; mulDiv carries the 512-bit intermediate so sqrtP^2 cannot overflow.
+        uint256 priceX96 = FullMath.mulDiv(sqrtPriceX96, sqrtPriceX96, FixedPoint96.Q96);
+        // rescale from Q96 to PRICE_PRECISION fixed-point.
+        priceX18 = FullMath.mulDiv(priceX96, PRICE_PRECISION, FixedPoint96.Q96);
+    }
+
+    /// @notice Computes raw impermanent loss (in stable units) for a settling position.
+    /// @dev    Pure: reads only the in-memory snapshot and the supplied amounts; never
+    ///         touches storage and never mutates the entry snapshot. All values are raw
+    ///         token amounts; the result is raw token1 (stable) units.
+    ///
+    ///         IL is measured against holding the entry token amounts, both legs valued
+    ///         at the exit price:
+    ///           V_HODL   = entryAmt1 + entryAmt0 * P_exit
+    ///           V_actual = outAmt1   + outAmt0   * P_exit   (withdrawn amounts incl. fees)
+    ///           IL_raw   = max(0, V_HODL - V_actual)
+    ///
+    ///         Rounding: P_exit is rounded down (see _priceFromTick); the same price is
+    ///         applied to both V_HODL and V_actual, so the rounding largely offsets.
+    ///         IL_raw is floored at zero and can never be negative.
+    ///
+    ///         Price source: spot price from `exitTick`, which is manipulable in-tx;
+    ///         accepted for MVP (TWAP/oracle deferred).
+    /// @param  pos       Position snapshot (only entryAmt0/entryAmt1 are read).
+    /// @param  outAmt0   Raw token0 amount withdrawn by the LP (fees included).
+    /// @param  outAmt1   Raw token1 amount withdrawn by the LP (fees included).
+    /// @param  exitTick  Pool tick at settlement, used to derive the exit price.
+    /// @return IL_raw    Raw impermanent loss in stable (token1) units; 0 if none.
+    function _computeIL(PositionState memory pos, uint128 outAmt0, uint128 outAmt1, int24 exitTick)
+        internal
+        pure
+        returns (uint256 IL_raw)
+    {
+        uint256 pExit = _priceFromTick(exitTick);
+
+        uint256 vHodl = uint256(pos.entryAmt1) + FullMath.mulDiv(uint256(pos.entryAmt0), pExit, PRICE_PRECISION);
+        uint256 vActual = uint256(outAmt1) + FullMath.mulDiv(uint256(outAmt0), pExit, PRICE_PRECISION);
+
+        IL_raw = vHodl > vActual ? vHodl - vActual : 0;
     }
 }
