@@ -376,7 +376,7 @@ function checkpoint(
     );
 
     int24 currentTick = _getCurrentTick(poolId);
-    _accrue(poolId, positionKey, currentTick, block.timestamp);
+    _accrue(poolId, positionKey, currentTick);
 
     emit Checkpointed(poolId, positionKey, block.timestamp);
 }
@@ -487,6 +487,12 @@ This tells the LP exactly which cap constrained their payout --- no ambiguity.
 
 Note: getEarnedCoverage() is they key view function for the frontend dashboard. It always returns the correct current value by simulating the accrual formula
 from lastAccrualTime to block.timestamp, applying the in-range gate against the current tick.
+
+The accrual math is implemented once in a shared internal `pure` helper. \_accrue() calls
+the helper and writes state (mutating earnedCoverageStable / lastAccrualTime and emitting
+AccrualUpdated); getEarnedCoverage() calls the same helper read-only and mutates nothing.
+This guarantees the live view and the on-chain accrual can never drift (no duplicated
+accrual logic).
 
 ## 12. Safety & Governance
 

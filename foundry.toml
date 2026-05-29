@@ -8,4 +8,32 @@ via_ir = false
 optimizer_runs = 800
 ffi = false
 
+[profile.default.fuzz]
+runs = 1000
+seed = "0x1"
+
+[profile.default.invariant]
+runs = 500
+depth = 100
+seed = "0x1"
+
+[profile.ci]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc_version = '0.8.26'
+evm_version = "cancun"
+via_ir = false
+optimizer_runs = 800
+ffi = false
+
+[profile.ci.fuzz]
+runs = 10000
+seed = "0x1"
+
+[profile.ci.invariant]
+runs = 1000
+depth = 500
+seed = "0x1"
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
