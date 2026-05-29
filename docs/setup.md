@@ -17,7 +17,7 @@ RangeGuard is being developed as a DeFi protocol with an emphasis on production-
 
 The project is designed to demonstrate not only smart contract implementation, but also engineering process, system design, and development discipline.
 
-It is will be my entry for the hookathon project in the Uniswap Hook Incubator (UHI) program.
+It will be my entry for the hookathon project in the Uniswap Hook Incubator (UHI) program.
 
 ---
 
@@ -94,11 +94,36 @@ Additional sub-structure will be introduced as the protocol architecture evolves
 
 ## Dependency Management
 
-Dependencies are managed via Foundry's `lib/` directory.
+Dependencies are managed through Foundry’s `lib/` directory and are introduced incrementally as the protocol architecture evolves.
 
-Currently included:
+The project aims to keep dependencies intentionally minimal during early-stage development to reduce unnecessary complexity and improve long-term maintainability and auditability.
 
-- forge-std (standard testing library)
+### Currently Included
+
+#### forge-std
+
+Standard Foundry testing and scripting utilities used for:
+
+- unit testing
+- fuzz testing
+- deployment scripting
+- development utilities
+
+#### Uniswap v4 Hooks
+
+Installed to support development of hook-based integrations and protocol logic aligned with the Uniswap v4 architecture.
+
+```bash
+forge install Uniswap/v4-hooks-public
+```
+
+### Rationale
+
+- Provides core interfaces and utilities required for Uniswap v4 hook development
+- Enables local integration and testing workflows
+- Aligns RangeGuard with emerging hook-based DeFi protocol patterns
+
+The Uniswap v4 hooks dependency will serve as the primary integration layer for RangeGuard’s configurable risk management and constraint system.
 
 ---
 
