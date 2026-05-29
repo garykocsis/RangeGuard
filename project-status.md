@@ -35,6 +35,8 @@ Last Updated: 2026-05-29
 - **Scaffold & infra** — hook skeleton, getHookPermissions(), deploy scripts
   (DeployRangeGuardHook.s.sol, HelperConfig.s.sol), BaseRangeGuardTest, RangeGuardHookHarness,
   DYNAMIC_FEE_FLAG enforcement, documentation system.
+- **CI / process** — GitHub Actions (fmt + build + test, Foundry pinned 1.3.5); deploy flow
+  runs without PRIVATE_KEY (envOr fallback); main protected (PR + green CI required).
 
 ---
 
@@ -88,6 +90,7 @@ All currently PARTIAL — selector-returning skeletons only; no logic wired.
 
 Status: COMPLETE
 
-- Deployment: DeployRangeGuardHook.s.sol, HelperConfig.s.sol
+- Deployment: DeployRangeGuardHook.s.sol (runs without PRIVATE_KEY via envOr), HelperConfig.s.sol
 - Shared harness: BaseRangeGuardTest (canonical deployment for all suites)
 - Internal-access harness: RangeGuardHookHarness (seeders + exposed internals; test-only)
+- CI: .github/workflows/ci.yml — fmt check + build + test on every PR (Foundry pinned 1.3.5)
