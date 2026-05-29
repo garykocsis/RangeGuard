@@ -40,6 +40,7 @@ All laid out in CLAUDE.md section order, with full NatSpec.
 | `test/invariant/CoverageAccountingInvariant.t.sol` | 6 protocol-level invariants, each mapped to invariant-mapping.md. |
 | `docs/session1-accrue-decisions.md` | Canonical record of all design decisions for `_accrue()`. |
 | `docs/session-2-accrue-complete.md` | This summary. |
+| `.github/workflows/ci.yml` | Minimal CI: `forge fmt --check` + build + test on every PR; Foundry pinned to 1.3.5. |
 
 ---
 
@@ -50,7 +51,18 @@ All laid out in CLAUDE.md section order, with full NatSpec.
 | `src/RangeGuardHook.sol` | Implemented `_accrue()` + `_accrueEarned()` + supporting state. Existing callbacks/permissions untouched. |
 | `spec.md` | §8 `checkpoint()` corrected to call `_accrue()` with 3 args; §11 note added documenting the shared `pure` helper. |
 | `context.md` | §11 prose updated to the 3-arg `_accrue()` signature. |
-| `project-status.md` | Progressively updated through impl → unit → fuzz → invariant completion. |
+| `project-status.md` | Progressively updated through impl → unit → fuzz → invariant completion; later restructured into Now/Completed/Roadmap. |
+| `script/DeployRangeGuardHook.s.sol` | `vm.envUint("PRIVATE_KEY")` → `vm.envOr(..., DEFAULT_ANVIL_PK)` so the canonical deploy flow (and thus `forge test`) runs in CI / fresh clones with no secret; real deploys still honor `PRIVATE_KEY`. |
+
+---
+
+## 3a. Delivery / Process
+
+- Shipped via **PR #1**, squash-merged to `main` (one clean feature commit).
+- CI added and **pinned to Foundry 1.3.5** to match local — this caught two real issues
+  before merge: (1) nightly-vs-stable `fmt` drift on pre-existing script files,
+  (2) `forge test` failing without `PRIVATE_KEY`. Both fixed; CI green.
+- Branch protection enabled on `main` (require PR + `Build & Test` status check).
 
 ---
 
