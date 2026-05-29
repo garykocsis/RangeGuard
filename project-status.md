@@ -217,7 +217,7 @@ Status: COMPLETE
 - [ ] Anvil deployment
 - [ ] Security review
 
-## Phase 5: Deployment Readiness on Sepolia
+## Phase 6: Deployment Readiness on Sepolia
 
 - [ ] Sepolia deployment
 - [ ] Security review

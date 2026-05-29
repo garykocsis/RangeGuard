@@ -14,6 +14,7 @@ Authoritative documents:
 - state-machine.md
 - invariant-mapping.md
 - testing-strategy.md
+- project-status.md
 
 Claude must treat these files as canonical sources of truth.
 
@@ -250,3 +251,35 @@ Do not introduce architectural changes without updating:
 5. End-to-end integration testing
 
 Do not begin implementation of a later phase until the current phase is complete and tested.
+
+---
+
+# Build & Test Commands
+
+- Build: forge build
+- Test single: forge test --match-test testFunctionName -vvv
+- Test file: forge test --match-path test/YourTest.t.sol -vvv
+- Fuzz tests: forge test --match-test testFuzz -vvv
+- Invariant tests: forge test --match-test invariant -vvv
+- Coverage: forge coverage
+- Gas snapshot: forge snapshot
+
+---
+
+# Session Startup Protocol
+
+At the start of every session, Claude must:
+
+1. Read spec.md, context.md, state-machine.md, invariant-mapping.md
+2. Read project-status.md to understand current implementation state
+3. Read the current hook contract in src/
+4. Confirm current implementation target before writing any code
+
+---
+
+# Current Session State
+
+Last completed: getHookPermissions()
+Current target: \_accrue()
+Next up: \_computeIL()
+Notes: [update this before ending each session]
