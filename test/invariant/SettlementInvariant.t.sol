@@ -20,7 +20,7 @@ contract SettlementInvariant is BaseRangeGuardTest {
 
     function setUp() public override {
         super.setUp();
-        harness = new RangeGuardHookHarness(rangeGuardHook.i_manager());
+        harness = new RangeGuardHookHarness(rangeGuardHook.i_manager(), address(this));
         handler = new ComputeILHandler(harness);
         payoutHandler = new ComputePayoutHandler(harness);
 

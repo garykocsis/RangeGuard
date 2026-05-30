@@ -45,8 +45,15 @@ contract DeployRangeGuardHook is Script {
             | Hooks.AFTER_REMOVE_LIQUIDITY_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
             | Hooks.BEFORE_INITIALIZE_FLAG;
 
+        // The protocol owner gates stagePoolConfig()/setReactiveContract(). Because the
+        // salted `new` below is routed through the canonical CREATE2 factory, the hook's
+        // constructor msg.sender is that factory — so owner must be passed explicitly as
+        // the broadcasting EOA, both for mining (deterministic args) and at deployment.
+        address ownerAddr = vm.addr(pk);
+        console.log("Owner address:", ownerAddr);
+
         // Mine a salt that will produce a hook address with the correct flags
-        bytes memory constructorArgs = abi.encode(IPoolManager(address(poolManager)));
+        bytes memory constructorArgs = abi.encode(IPoolManager(address(poolManager)), ownerAddr);
         (address predicted, bytes32 salt) =
             HookMiner.find(CREATE2_DEPLOYER, permissions, type(RangeGuardHook).creationCode, constructorArgs);
 
@@ -56,7 +63,7 @@ contract DeployRangeGuardHook is Script {
 
         // ✅ Deterministic CREATE2 deployment broadcast
         vm.startBroadcast(pk);
-        RangeGuardHook rangeGuardHook = new RangeGuardHook{salt: salt}(IPoolManager(address(poolManager)));
+        RangeGuardHook rangeGuardHook = new RangeGuardHook{salt: salt}(IPoolManager(address(poolManager)), ownerAddr);
         require(address(rangeGuardHook) == predicted, "CREATE2 mismatch");
         vm.stopBroadcast();
 

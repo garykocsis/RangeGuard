@@ -30,7 +30,7 @@ contract ComputeILTest is BaseRangeGuardTest {
 
     function setUp() public override {
         super.setUp();
-        harness = new RangeGuardHookHarness(rangeGuardHook.i_manager());
+        harness = new RangeGuardHookHarness(rangeGuardHook.i_manager(), address(this));
     }
 
     /// @dev Build a position carrying only the fields _computeIL reads (entry amounts).

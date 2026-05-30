@@ -26,7 +26,7 @@ contract ComputeILFuzzTest is BaseRangeGuardTest {
 
     function setUp() public override {
         super.setUp();
-        harness = new RangeGuardHookHarness(rangeGuardHook.i_manager());
+        harness = new RangeGuardHookHarness(rangeGuardHook.i_manager(), address(this));
     }
 
     function _pos(uint128 a0, uint128 a1) internal pure returns (RangeGuardHook.PositionState memory pos) {

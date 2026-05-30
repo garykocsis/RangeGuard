@@ -3,12 +3,13 @@ pragma solidity 0.8.26;
 
 import {BaseHook} from "v4-hooks-public/src/base/BaseHook.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {PoolId} from "v4-core/types/PoolId.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 import {ModifyLiquidityParams, SwapParams} from "v4-core/types/PoolOperation.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {LPFeeLibrary} from "v4-core/libraries/LPFeeLibrary.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {FullMath} from "v4-core/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/libraries/FixedPoint96.sol";
@@ -20,6 +21,8 @@ import {FixedPoint96} from "v4-core/libraries/FixedPoint96.sol";
 ///         core accrual primitive (`_accrue`) and the shared accrual math helper
 ///         (`_accrueEarned`) together with the minimum state required to support them.
 contract RangeGuardHook is BaseHook {
+    using PoolIdLibrary for PoolKey;
+
     /*//////////////////////////////////////////////////////////////
                               TYPE DECLARATIONS
     //////////////////////////////////////////////////////////////*/
@@ -86,6 +89,17 @@ contract RangeGuardHook is BaseHook {
         uint256 pendingPayout; // Computed payout awaiting execution
     }
 
+    /// @notice Transient staging record for a pool, written by `stagePoolConfig()` and
+    ///         deleted atomically in `_beforeInitialize()` on commit.
+    /// @dev    `exists` distinguishes a staged pool from the zero-value default; the
+    ///         reactive address is intentionally absent (registered later in Phase 3).
+    struct PendingPoolSetup {
+        PoolConfig config; // Fully validated config awaiting commit
+        address authorizedInitializer; // Only address permitted to initialize the pool
+        uint160 expectedSqrtPriceX96; // Exact price the pool must be initialized at
+        bool exists; // true once staged, false after commit/never-staged
+    }
+
     /*//////////////////////////////////////////////////////////////
                                STATE VARIABLES
     //////////////////////////////////////////////////////////////*/
@@ -102,11 +116,47 @@ contract RangeGuardHook is BaseHook {
     /// @notice Basis-points denominator (10,000) for all percentage caps.
     uint256 internal constant BPS_DENOM = 10_000;
 
+    /// @notice Maximum LP fee portion accepted at staging (10,000 bps = 100%).
+    uint24 internal constant MAX_BASE_FEE_BPS = 10_000;
+
+    /// @notice Maximum buffer fee portion accepted at staging (5,000 bps = 50%).
+    uint24 internal constant MAX_BUFFER_BPS = 5_000;
+
+    /// @notice Maximum coverage APR accepted at staging (0.50e18 = 50%).
+    uint256 internal constant MAX_COVERAGE_APR = 0.5e18;
+
+    /// @notice Maximum value for a percentage cap expressed in bps (10,000 = 100%).
+    uint16 internal constant MAX_PAYOUT_PCT = 10_000;
+
+    /// @notice Day-count seconds-per-year: Actual/365 Fixed.
+    uint256 internal constant SECONDS_PER_YEAR_365F = 31_536_000;
+
+    /// @notice Day-count seconds-per-year: Actual/360.
+    uint256 internal constant SECONDS_PER_YEAR_360 = 31_104_000;
+
     /// @notice The Uniswap v4 PoolManager this hook is bound to.
     IPoolManager public immutable i_manager;
 
+    /// @notice Protocol owner; gates `stagePoolConfig()` and `setReactiveContract()`.
+    /// @dev    Distinct from per-pool `authorizedInitializer` and `config.admin`.
+    address public immutable owner;
+
+    /// @notice Transient staged setup per pool; deleted on commit in `_beforeInitialize()`.
+    /// @dev    `internal` (not externally exposed) so the test harness subclass can assert
+    ///         on it without a production getter, per the project's harness pattern.
+    mapping(PoolId => PendingPoolSetup) internal _pendingSetup;
+
+    /// @notice True once a pool's staged config has been committed via `_beforeInitialize()`.
+    mapping(PoolId => bool) internal _poolInitialized;
+
+    /// @notice One-time guard locking `reactiveContract[poolId]` after registration.
+    mapping(PoolId => bool) internal _reactiveSet;
+
     /// @notice Immutable per-pool configuration, keyed by PoolId.
     mapping(PoolId => PoolConfig) public poolConfig;
+
+    /// @notice Registered reactive contract per pool; address(0) until Phase 3.
+    mapping(PoolId => address) public reactiveContract;
 
     /// @notice Mutable per-pool buffer accounting, keyed by PoolId.
     mapping(PoolId => PoolState) public poolState;
@@ -136,17 +186,153 @@ contract RangeGuardHook is BaseHook {
         uint256 timestamp
     );
 
+    /// @notice Emitted on `stagePoolConfig()` (Phase 1) when a config is staged or re-staged.
+    event PoolConfigStaged(
+        PoolId indexed poolId, PoolConfig config, address authorizedInitializer, uint160 expectedSqrtPriceX96
+    );
+
+    /// @notice Emitted on `_beforeInitialize()` commit (Phase 2). Reactive address not yet set.
+    event PoolConfigInitialized(PoolId indexed poolId, PoolConfig config);
+
+    /// @notice Emitted on `setReactiveContract()` (Phase 3) when the reactive address is locked.
+    event ReactiveContractSet(PoolId indexed poolId, address reactive);
+
+    /*//////////////////////////////////////////////////////////////
+                                   ERRORS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Thrown when a caller other than `owner` invokes an owner-gated function.
+    error NotOwner();
+
+    /// @notice Thrown by `stagePoolConfig()` when the pool is already initialized.
+    error PoolAlreadyInitialized();
+
+    /// @notice Thrown by `setReactiveContract()` when the pool is not yet initialized.
+    error PoolNotInitialized();
+
+    /// @notice Thrown by `_beforeInitialize()` when no staged setup exists for the pool.
+    error PoolNotStaged();
+
+    /// @notice Thrown when `config.admin == address(0)`.
+    error ZeroAdmin();
+
+    /// @notice Thrown when a reactive address of `address(0)` is supplied.
+    error ZeroReactive();
+
+    /// @notice Thrown when `authorizedInitializer == address(0)`.
+    error ZeroInitializer();
+
+    /// @notice Thrown when `expectedSqrtPriceX96 == 0`.
+    error ZeroSqrtPrice();
+
+    /// @notice Thrown when `key.fee` does not carry the dynamic-fee flag.
+    error NotDynamicFee();
+
+    /// @notice Thrown by `_beforeInitialize()` when `sender != authorizedInitializer`.
+    error UnauthorizedInitializer();
+
+    /// @notice Thrown by `_beforeInitialize()` when `sqrtPriceX96 != expectedSqrtPriceX96`.
+    error UnexpectedSqrtPrice();
+
+    /// @notice Thrown by `setReactiveContract()` when the reactive address is already set.
+    error ReactiveAlreadySet();
+
+    /// @notice Thrown when fee bounds are exceeded (`baseLpFeeBps` or `bufferBps`).
+    error InvalidFeeConfig();
+
+    /// @notice Thrown when `coverageApr` is zero or exceeds `MAX_COVERAGE_APR`.
+    error InvalidApr();
+
+    /// @notice Thrown when a payout cap exceeds its permitted maximum.
+    error InvalidPayoutCaps();
+
+    /// @notice Thrown when `secondsPerYear` is neither A/365F nor A/360.
+    error UnsupportedDayCount();
+
+    /*//////////////////////////////////////////////////////////////
+                                 MODIFIERS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Restricts a function to the protocol `owner`.
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert NotOwner();
+        _;
+    }
+
     /*//////////////////////////////////////////////////////////////
                                  FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    constructor(IPoolManager _manager) BaseHook(_manager) {
+    constructor(IPoolManager _manager, address _owner) BaseHook(_manager) {
         i_manager = _manager;
+        owner = _owner;
     }
 
     /*//////////////////////////////////////////////////////////////
                              EXTERNAL / PUBLIC
     //////////////////////////////////////////////////////////////*/
+
+    /// @notice Phase 1: stage a pool's immutable config before `PoolManager.initialize()`.
+    /// @dev    onlyOwner. Validates all bounds and pins the authorized initializer and the
+    ///         exact init price. Re-stageable (overwrites) until the pool is initialized;
+    ///         reverts `PoolAlreadyInitialized` thereafter. The reactive address is NOT
+    ///         staged here (registered in Phase 3 to resolve the circular deploy dependency).
+    ///         All checks precede the single storage write (CEI); no external calls.
+    /// @param  key                    Pool key; `key.fee` must carry the dynamic-fee flag.
+    /// @param  config                 Fully specified pool configuration to stage.
+    /// @param  authorizedInitializer  Only address permitted to initialize this pool.
+    /// @param  expectedSqrtPriceX96   Exact sqrt price the pool must be initialized at.
+    function stagePoolConfig(
+        PoolKey calldata key,
+        PoolConfig calldata config,
+        address authorizedInitializer,
+        uint160 expectedSqrtPriceX96
+    ) external onlyOwner {
+        PoolId poolId = key.toId();
+
+        // Checks (fail-fast, in spec order) — no storage written until all pass.
+        if (_poolInitialized[poolId]) revert PoolAlreadyInitialized();
+        if (config.admin == address(0)) revert ZeroAdmin();
+        if (authorizedInitializer == address(0)) revert ZeroInitializer();
+        if (expectedSqrtPriceX96 == 0) revert ZeroSqrtPrice();
+        if (!LPFeeLibrary.isDynamicFee(key.fee)) revert NotDynamicFee();
+        if (config.baseLpFeeBps > MAX_BASE_FEE_BPS) revert InvalidFeeConfig();
+        if (config.bufferBps > MAX_BUFFER_BPS) revert InvalidFeeConfig();
+        if (config.coverageApr == 0 || config.coverageApr > MAX_COVERAGE_APR) revert InvalidApr();
+        if (config.maxPayoutPctOfIl > MAX_PAYOUT_PCT) revert InvalidPayoutCaps();
+        if (config.maxPayoutPctOfBuffer > BPS_DENOM) revert InvalidPayoutCaps();
+        if (config.secondsPerYear != SECONDS_PER_YEAR_365F && config.secondsPerYear != SECONDS_PER_YEAR_360) {
+            revert UnsupportedDayCount();
+        }
+
+        // Effects: stage (or overwrite) the pending setup.
+        PendingPoolSetup storage pending = _pendingSetup[poolId];
+        pending.config = config;
+        pending.authorizedInitializer = authorizedInitializer;
+        pending.expectedSqrtPriceX96 = expectedSqrtPriceX96;
+        pending.exists = true;
+
+        emit PoolConfigStaged(poolId, config, authorizedInitializer, expectedSqrtPriceX96);
+    }
+
+    /// @notice Phase 3: register the reactive contract address once, after its deployment.
+    /// @dev    onlyOwner, one-time. The `_reactiveSet` guard permanently locks the address
+    ///         after the first successful call. Note: `onlyOwner` runs before the one-time
+    ///         guard, so a non-owner second caller reverts `NotOwner`, not `ReactiveAlreadySet`.
+    /// @param  key       Pool key identifying the initialized pool.
+    /// @param  reactive  Deployed reactive contract address (must be non-zero).
+    function setReactiveContract(PoolKey calldata key, address reactive) external onlyOwner {
+        PoolId poolId = key.toId();
+
+        if (!_poolInitialized[poolId]) revert PoolNotInitialized();
+        if (_reactiveSet[poolId]) revert ReactiveAlreadySet();
+        if (reactive == address(0)) revert ZeroReactive();
+
+        reactiveContract[poolId] = reactive;
+        _reactiveSet[poolId] = true;
+
+        emit ReactiveContractSet(poolId, reactive);
+    }
 
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
@@ -171,7 +357,38 @@ contract RangeGuardHook is BaseHook {
                                  INTERNAL
     //////////////////////////////////////////////////////////////*/
 
-    function _beforeInitialize(address, PoolKey calldata, uint160) internal override returns (bytes4) {
+    /// @notice Phase 2: PoolManager callback that commits the staged config atomically.
+    /// @dev    Authoritative gate for pool creation: validates the dynamic-fee flag, that a
+    ///         staged setup exists, that `sender` is the authorized initializer, and that the
+    ///         price matches exactly. On success it copies the staged config into
+    ///         `poolConfig`, deletes the pending setup, and marks the pool initialized. Any
+    ///         revert here makes `PoolManager.initialize()` revert in full, so a pool can
+    ///         never exist without a committed config. `reactiveContract[poolId]` remains
+    ///         `address(0)` until Phase 3.
+    function _beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96)
+        internal
+        override
+        returns (bytes4)
+    {
+        PoolId poolId = key.toId();
+
+        // Checks (spec order). NotDynamicFee is authoritative; PoolNotStaged also implicitly
+        // catches a mismatched key since PoolId is derived from the full key (incl. fee).
+        if (!LPFeeLibrary.isDynamicFee(key.fee)) revert NotDynamicFee();
+
+        PendingPoolSetup storage pending = _pendingSetup[poolId];
+        if (!pending.exists) revert PoolNotStaged();
+        if (sender != pending.authorizedInitializer) revert UnauthorizedInitializer();
+        if (sqrtPriceX96 != pending.expectedSqrtPriceX96) revert UnexpectedSqrtPrice();
+
+        // Effects: commit config, clear staging, mark initialized.
+        PoolConfig memory committed = pending.config;
+        poolConfig[poolId] = committed;
+        delete _pendingSetup[poolId];
+        _poolInitialized[poolId] = true;
+
+        emit PoolConfigInitialized(poolId, committed);
+
         return this.beforeInitialize.selector;
     }
 
@@ -184,9 +401,9 @@ contract RangeGuardHook is BaseHook {
     }
 
     function _afterAddLiquidity(
-        address owner,
-        PoolKey calldata key,
-        ModifyLiquidityParams calldata params,
+        address,
+        PoolKey calldata,
+        ModifyLiquidityParams calldata,
         BalanceDelta delta,
         BalanceDelta,
         bytes calldata

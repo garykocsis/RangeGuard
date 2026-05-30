@@ -17,7 +17,7 @@ import {RangeGuardHook} from "../../src/RangeGuardHook.sol";
 ///           - exposes setters to seed PoolConfig / PositionState directly;
 ///           - exposes the internal _accrue() and a position getter.
 contract RangeGuardHookHarness is RangeGuardHook {
-    constructor(IPoolManager _manager) RangeGuardHook(_manager) {}
+    constructor(IPoolManager _manager, address _owner) RangeGuardHook(_manager, _owner) {}
 
     /// @dev Skip hook-address flag validation during testing. The base function is
     ///      virtual specifically to allow this (see BaseHook NatSpec).
@@ -80,5 +80,20 @@ contract RangeGuardHookHarness is RangeGuardHook {
     /// @notice Returns the full stored PositionState for assertions.
     function getPosition(PoolId poolId, bytes32 positionKey) external view returns (PositionState memory) {
         return positions[poolId][positionKey];
+    }
+
+    /// @notice Exposes the private `_poolInitialized` flag for assertions.
+    function exposed_poolInitialized(PoolId poolId) external view returns (bool) {
+        return _poolInitialized[poolId];
+    }
+
+    /// @notice Exposes the private `_reactiveSet` one-time guard for assertions.
+    function exposed_reactiveSet(PoolId poolId) external view returns (bool) {
+        return _reactiveSet[poolId];
+    }
+
+    /// @notice Exposes the private `_pendingSetup` staging record for assertions.
+    function exposed_pendingSetup(PoolId poolId) external view returns (PendingPoolSetup memory) {
+        return _pendingSetup[poolId];
     }
 }

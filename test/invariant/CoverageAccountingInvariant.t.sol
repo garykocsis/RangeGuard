@@ -20,7 +20,7 @@ contract CoverageAccountingInvariant is BaseRangeGuardTest {
 
     function setUp() public override {
         super.setUp();
-        harness = new RangeGuardHookHarness(rangeGuardHook.i_manager());
+        harness = new RangeGuardHookHarness(rangeGuardHook.i_manager(), address(this));
         handler = new AccrueHandler(harness);
 
         // Only the handler's accrue() may drive state during invariant runs.
