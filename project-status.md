@@ -18,15 +18,15 @@ Last Updated: 2026-05-29
 
 ## Now
 
-- **Active target:** \_computePayout() (next). \_computeIL() COMPLETE.
-- \_computeIL pricing: raw-ratio, decimal-agnostic (Risk 6 resolved). Shared
-  \_priceFromTick() helper (TickMath -> FullMath, raw token1/token0 x PRICE_PRECISION);
-  reused later by afterAddLiquidity for P_entry. Both functions pure. NatSpec documents
-  spot-price manipulation risk + rounding direction.
-- Progress (\_computeIL): [x] design [x] implement [x] unit [x] fuzz [x] invariant
-- **Tests:** 57 passing, 0 failing. \_computeIL: unit test/unit/ComputeIL.t.sol (14),
-  fuzz test/fuzz/ComputeILFuzz.t.sol (8 @1000 runs), invariant
-  test/invariant/SettlementInvariant.t.sol (3 @500x100, 0 reverts).
+- **Active target:** Phase 1 COMPLETE — next is Phase 2 hook callbacks, starting with
+  beforeInitialize() (config decode + DYNAMIC_FEE_FLAG enforcement).
+- Carry-ins for Phase 2: `poolState` mapping is now wired (added with \_computePayout);
+  `BPS_DENOM` + `LimitingFactor` enum live in src. Open sequencing question for
+  beforeRemoveLiquidity: v4 withdrawn out-amounts are known only AFTER removal, but spec
+  calls \_computeIL in beforeRemoveLiquidity — resolve when wiring callbacks.
+  See docs/session-4-computePayout-complete.md (deferred items).
+- Progress (\_computePayout): [x] design  [x] implement  [x] unit  [x] fuzz  [x] invariant
+- **Tests:** 78 passing, 0 failing.
 
 ---
 
@@ -35,6 +35,13 @@ Last Updated: 2026-05-29
 - **\_accrue()** — engine + shared pure helper \_accrueEarned(), supporting state
   (PoolConfig/PoolState/PositionState, mappings, AccrualUpdated), full test suite.
   -> docs/session-2-accrue-complete.md, docs/session1-accrue-decisions.md
+- **\_computeIL()** — IL primitive + shared pure \_priceFromTick() helper (raw-ratio,
+  decimal-agnostic; resolves Risk 6); full test suite (14 unit + 8 fuzz + 3 invariant).
+  -> docs/session-3-computeIL-complete.md
+- **\_computePayout()** — three-cap logic + LimitingFactor enum; pure \_computePayoutAmount()
+  core + storage-reading wrapper; added BPS_DENOM, LimitingFactor enum, poolState mapping;
+  full test suite (15 unit + 4 fuzz + 2 settlement invariants).
+  -> docs/session-4-computePayout-complete.md
 - **Scaffold & infra** — hook skeleton, getHookPermissions(), deploy scripts
   (DeployRangeGuardHook.s.sol, HelperConfig.s.sol), BaseRangeGuardTest, RangeGuardHookHarness,
   DYNAMIC_FEE_FLAG enforcement, documentation system.
@@ -49,7 +56,7 @@ Last Updated: 2026-05-29
 
 - [x] \_accrue() (impl + unit + fuzz + invariant)
 - [x] \_computeIL() (impl + unit + fuzz + invariant; shared \_priceFromTick helper)
-- [ ] \_computePayout() <- NEXT (three-cap logic + LimitingFactor)
+- [x] \_computePayout() (impl + unit + fuzz + invariant; three-cap logic + LimitingFactor)
 
 ### Phase 2: Hook Callbacks
 

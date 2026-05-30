@@ -33,6 +33,11 @@ contract RangeGuardHookHarness is RangeGuardHook {
         positions[poolId][positionKey] = pos;
     }
 
+    /// @notice Seeds a pool's mutable buffer accounting directly into storage.
+    function seedPoolState(PoolId poolId, PoolState memory state) external {
+        poolState[poolId] = state;
+    }
+
     /// @notice Exposes the internal accrual engine for direct unit testing.
     function exposed_accrue(PoolId poolId, bytes32 positionKey, int24 currentTick) external {
         _accrue(poolId, positionKey, currentTick);
@@ -50,6 +55,26 @@ contract RangeGuardHookHarness is RangeGuardHook {
         returns (uint256)
     {
         return _computeIL(pos, outAmt0, outAmt1, exitTick);
+    }
+
+    /// @notice Exposes the internal payout wrapper (reads config + buffer state).
+    function exposed_computePayout(PoolId poolId, PositionState memory pos, uint256 ILRaw)
+        external
+        view
+        returns (uint256, LimitingFactor)
+    {
+        return _computePayout(poolId, pos, ILRaw);
+    }
+
+    /// @notice Exposes the pure three-cap payout core for direct unit / fuzz testing.
+    function exposed_computePayoutAmount(
+        uint256 ILRaw,
+        uint256 earned,
+        uint256 bufferBalance,
+        uint16 maxPayoutPctOfIl,
+        uint16 maxPayoutPctOfBuffer
+    ) external pure returns (uint256, LimitingFactor) {
+        return _computePayoutAmount(ILRaw, earned, bufferBalance, maxPayoutPctOfIl, maxPayoutPctOfBuffer);
     }
 
     /// @notice Returns the full stored PositionState for assertions.

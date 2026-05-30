@@ -11,21 +11,29 @@ import {BaseRangeGuardTest} from "../shared/BaseRangeGuardTest.t.sol";
 import {RangeGuardHook} from "../../src/RangeGuardHook.sol";
 import {RangeGuardHookHarness} from "../harness/RangeGuardHookHarness.sol";
 import {ComputeILHandler} from "./handlers/ComputeILHandler.sol";
+import {ComputePayoutHandler} from "./handlers/ComputePayoutHandler.sol";
 
 contract SettlementInvariant is BaseRangeGuardTest {
     RangeGuardHookHarness internal harness;
     ComputeILHandler internal handler;
+    ComputePayoutHandler internal payoutHandler;
 
     function setUp() public override {
         super.setUp();
         harness = new RangeGuardHookHarness(rangeGuardHook.i_manager());
         handler = new ComputeILHandler(harness);
+        payoutHandler = new ComputePayoutHandler(harness);
 
-        // Only the handler's computeIL() may drive state during invariant runs.
+        // Only the handlers' fuzzed actions may drive state during invariant runs.
         targetContract(address(handler));
-        bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = ComputeILHandler.computeIL.selector;
-        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
+        bytes4[] memory ilSelectors = new bytes4[](1);
+        ilSelectors[0] = ComputeILHandler.computeIL.selector;
+        targetSelector(FuzzSelector({addr: address(handler), selectors: ilSelectors}));
+
+        targetContract(address(payoutHandler));
+        bytes4[] memory payoutSelectors = new bytes4[](1);
+        payoutSelectors[0] = ComputePayoutHandler.computePayout.selector;
+        targetSelector(FuzzSelector({addr: address(payoutHandler), selectors: payoutSelectors}));
     }
 
     /// invariant-mapping.md (Settlement): "IL_raw must never be negative".
@@ -60,5 +68,41 @@ contract SettlementInvariant is BaseRangeGuardTest {
         assertEq(live.tickLower, base.tickLower, "tickLower mutated");
         assertEq(live.tickUpper, base.tickUpper, "tickUpper mutated");
         assertEq(live.entryNotionalStable, base.entryNotionalStable, "entryNotional mutated");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                          _computePayout INVARIANTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// invariant-mapping.md (Settlement): "payout must never exceed IL_covered /
+    /// earnedCoverageStable / bufferCap / bufferBalanceStable / the configured payout caps".
+    /// Every computed payout is bounded by all three caps and by the raw buffer balance
+    /// (the latter because the fuzzed cap percentages stay within the init-enforced
+    /// [0, 10000] domain).
+    function invariant_PayoutNeverExceedsAnyCap() public view {
+        uint256 payout = payoutHandler.ghost_lastPayout();
+        assertLe(payout, payoutHandler.ghost_lastILCovered(), "payout exceeded IL_covered");
+        assertLe(payout, payoutHandler.ghost_lastEarned(), "payout exceeded earned coverage");
+        assertLe(payout, payoutHandler.ghost_lastBufferCap(), "payout exceeded bufferCap");
+        assertLe(payout, payoutHandler.ghost_lastBuffer(), "payout exceeded buffer balance");
+    }
+
+    /// invariant-mapping.md (Settlement): supports an unambiguous LimitingFactor in every
+    /// settlement — the reported factor always names a cap whose value equals the payout,
+    /// and NONE is reported iff there was no impermanent loss.
+    function invariant_PayoutFactorMatchesBindingCap() public view {
+        RangeGuardHook.LimitingFactor factor = payoutHandler.ghost_lastFactor();
+        uint256 payout = payoutHandler.ghost_lastPayout();
+
+        if (factor == RangeGuardHook.LimitingFactor.NONE) {
+            assertEq(payoutHandler.ghost_lastILRaw(), 0, "NONE only when IL_raw == 0");
+            assertEq(payout, 0, "NONE must carry zero payout");
+        } else if (factor == RangeGuardHook.LimitingFactor.IL_CAP) {
+            assertEq(payout, payoutHandler.ghost_lastILCovered(), "IL_CAP != IL_covered");
+        } else if (factor == RangeGuardHook.LimitingFactor.COVERAGE_CAP) {
+            assertEq(payout, payoutHandler.ghost_lastEarned(), "COVERAGE_CAP != earned");
+        } else {
+            assertEq(payout, payoutHandler.ghost_lastBufferCap(), "BUFFER_CAP != bufferCap");
+        }
     }
 }

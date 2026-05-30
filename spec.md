@@ -271,7 +271,7 @@ function  _accrue(
     bytes32 positionKey,
     int24 currentTick
    ) internal {
-    PositionState storage pos = position[poolId][positionkey];
+    PositionState storage pos = position[poolId][positionKey];
     PoolConfig storage cfg = poolConfig[poolId];
 
     if(!pos.active) return;
@@ -286,7 +286,7 @@ function  _accrue(
         / (APR_PRECISION * APR_PRECISION);
 
         if (cfg.maxAccruedCoverageMultiple > 0) {
-            uint256 cap = pos.entryNotionalStable * cfg.maxAccruedCoverageMultiple)
+            uint256 cap = pos.entryNotionalStable * cfg.maxAccruedCoverageMultiple
             / APR_PRECISION:
             uint256 newTotal = pos.earnedCoverageStable + delta;
             pos.earnedCoverageStable = newTotal > cap ? cap: newTotal;
@@ -295,7 +295,7 @@ function  _accrue(
         }
     }
 
-    pos.lastAccrualTime = uint32(timestamp);
+    pos.lastAccrualTime = uint32(block.timestamp);
 
     emit accrualUpdated(
         poolId,
