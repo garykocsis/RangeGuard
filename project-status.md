@@ -1,6 +1,6 @@
 # RangeGuard Project Status
 
-Last Updated: 2026-05-29
+Last Updated: 2026-05-30
 
 ## How to use this file
 
@@ -18,20 +18,40 @@ Last Updated: 2026-05-29
 
 ## Now
 
-- **Active target:** Phase 1 COMPLETE — next is Phase 2 hook callbacks, starting with
-  beforeInitialize() (config decode + DYNAMIC_FEE_FLAG enforcement).
-- Carry-ins for Phase 2: `poolState` mapping is now wired (added with \_computePayout);
-  `BPS_DENOM` + `LimitingFactor` enum live in src. Open sequencing question for
-  beforeRemoveLiquidity: v4 withdrawn out-amounts are known only AFTER removal, but spec
-  calls \_computeIL in beforeRemoveLiquidity — resolve when wiring callbacks.
-  See docs/session-4-computePayout-complete.md (deferred items).
-- Progress (\_computePayout): [x] design  [x] implement  [x] unit  [x] fuzz  [x] invariant
-- **Tests:** 78 passing, 0 failing.
+- **Active target:** `afterAddLiquidity()` — derive entryAmt0/entryAmt1 from the liquidity
+  delta, compute `entryNotionalStable`, register `PositionState` (active=true), call
+  `_accrue()` with dt=0 to initialize `lastAccrualTime`, emit `PositionRegistered`.
+- **Just completed:** Pool setup (three-phase) — `stagePoolConfig()` + `_beforeInitialize()`
+  commit + `setReactiveContract()`. Owner is an explicit constructor param (the salted
+  CREATE2 deploy is routed through the canonical factory, so `msg.sender` in the ctor is
+  the factory — owner must be passed as the broadcasting EOA). Setup flags
+  (`_pendingSetup`/`_poolInitialized`/`_reactiveSet`) are `internal` (not the amendment's
+  literal `private`) so the harness subclass can assert on them; externally still opaque.
+  `onlyReactive` deferred to the reactive-callbacks phase; no `minHoldSeconds` bound
+  enforced (followed the locked validation ladder).
+- **Key design points for afterAddLiquidity:**
+  - `entryNotionalStable = entryAmt1 + entryAmt0 * P_entry`, using the shared
+    `_priceFromTick()` helper at the deposit tick (same price convention as `_computeIL`).
+  - Position key derivation: `keccak256(abi.encode(owner, tickLower, tickUpper, salt))`,
+    scoped by PoolId.
+  - Requires pool `_poolInitialized[id] == true` (lifecycle invariant).
+- **Carry-ins:**
+  - `poolState` mapping wired; `BPS_DENOM` + `LimitingFactor` enum live in src.
+  - Open sequencing question for `beforeRemoveLiquidity`: v4 withdrawn out-amounts are
+    known only AFTER removal, but spec calls `_computeIL` in `beforeRemoveLiquidity` —
+    resolve when wiring those callbacks. See `docs/session-4-computePayout-complete.md`.
+- **Tests:** 123 passing, 0 failing.
 
 ---
 
 ## Completed
 
+- **Pool setup (three-phase)** — stagePoolConfig() + \_beforeInitialize() commit +
+  setReactiveContract(); owner immutable (explicit ctor arg) + onlyOwner, hard-bound
+  constants, PendingPoolSetup struct, setup mappings, 3 events, 16 errors. Full test
+  suite: 32 unit + 3 fuzz (StagePoolConfigFuzz) + 6 invariant (PoolSetupInvariant +
+  handler) + 4 integration (real PoolManager.initialize round-trip). Deploy script and
+  harness updated for the owner ctor param. (+45 tests → 123 total)
 - **\_accrue()** — engine + shared pure helper \_accrueEarned(), supporting state
   (PoolConfig/PoolState/PositionState, mappings, AccrualUpdated), full test suite.
   -> docs/session-2-accrue-complete.md, docs/session1-accrue-decisions.md
@@ -62,8 +82,10 @@ Last Updated: 2026-05-29
 
 All currently PARTIAL — selector-returning skeletons only; no logic wired.
 
-- [ ] beforeInitialize() (config decode + DYNAMIC_FEE_FLAG enforcement)
-- [ ] afterAddLiquidity() (register position, baseline \_accrue())
+- [x] Pool setup: stagePoolConfig() + \_beforeInitialize() commit + setReactiveContract()
+      (three-phase pool bring-up; replaces original "beforeInitialize config decode" design;
+      see docs/spec-amendment-beforeInitialize-config-split.md)
+- [ ] afterAddLiquidity() (register position, baseline \_accrue()) ← current
 - [ ] beforeSwap() (return derived dynamic fee)
 - [ ] afterSwap() (buffer funding + TickUpdated; no accrual)
 - [ ] beforeRemoveLiquidity() (eligibility -> \_accrue -> \_computeIL -> \_computePayout)

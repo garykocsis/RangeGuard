@@ -39,7 +39,7 @@ contract AccrueFuzzTest is BaseRangeGuardTest {
 
     function setUp() public override {
         super.setUp();
-        harness = new RangeGuardHookHarness(rangeGuardHook.i_manager());
+        harness = new RangeGuardHookHarness(rangeGuardHook.i_manager(), address(this));
         harness.seedConfig(POOL_ID, _config(COVERAGE_APR, MAX_MULTIPLE));
         vm.warp(START_TIME);
     }

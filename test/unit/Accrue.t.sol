@@ -52,7 +52,7 @@ contract AccrueTest is BaseRangeGuardTest {
         super.setUp();
         // Reuse the PoolManager from the canonically deployed hook; the harness skips
         // address-flag validation, so it can be deployed directly here.
-        harness = new RangeGuardHookHarness(rangeGuardHook.i_manager());
+        harness = new RangeGuardHookHarness(rangeGuardHook.i_manager(), address(this));
         harness.seedConfig(POOL_ID, _defaultConfig());
         vm.warp(START_TIME);
     }

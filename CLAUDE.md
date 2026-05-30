@@ -22,37 +22,58 @@ Claude must treat these files as canonical sources of truth.
 
 # Current Implementation Status
 
-Completed:
+Completed (Phase 1):
 
 - Foundry scaffold
 - hook skeleton
 - getHookPermissions()
 - deployment script
 - documentation architecture
+- \_accrue()
+- \_computeIL()
+- \_computePayout()
+
+Completed (Phase 2 — pool setup):
+
+- Pool setup functions: stagePoolConfig() + \_beforeInitialize() + setReactiveContract()
+  (three-phase bring-up; owner as explicit constructor arg; 123 tests passing)
 
 Current implementation target:
 
-- \_accrue()
+- afterAddLiquidity()
 
 Upcoming implementation order:
 
-1. \_accrue()
-2. \_computeIL()
-3. \_computePayout()
-4. hook callback wiring
-5. checkpoint()
-6. Reactive Network contract
-7. frontend dashboard
+1. afterAddLiquidity() ← current
+2. beforeSwap() / afterSwap()
+3. beforeRemoveLiquidity() / afterRemoveLiquidity()
+4. checkpoint()
+5. Reactive Network contract
+6. Frontend dashboard
 
 ---
 
 # Core Architecture Rules
 
+Pool setup (three-phase pattern — mandatory):
+
+- pool setup follows three ordered phases:
+  Phase 1: stagePoolConfig() — onlyOwner, called before PoolManager.initialize()
+  Phase 2: \_beforeInitialize() — PoolManager callback, commits staged config atomically
+  Phase 3: setReactiveContract() — onlyOwner, one-time, called after reactive deployment
+- stagePoolConfig() is external and onlyOwner (NOT internal-only)
+- \_beforeInitialize() validates: DYNAMIC_FEE_FLAG, staged config exists, sender ==
+  authorizedInitializer, sqrtPriceX96 == expectedSqrtPriceX96 — revert on any failure
+- PoolConfig is committed atomically inside \_beforeInitialize(); pool never exists
+  without valid PoolConfig (PoolNotStaged revert prevents this)
+- setReactiveContract() is one-time only — \_reactiveSet guard permanently locks
+  reactiveContract[poolId] after initial registration
 - pools must initialize with DYNAMIC_FEE_FLAG enabled
-- DYNAMIC_FEE_FLAG enforcement is mandatory
-- pools must initialize atomically during beforeInitialize()
-- PoolConfig initialization is internal-only
+- DYNAMIC_FEE_FLAG enforcement is mandatory at both stagePoolConfig() and \_beforeInitialize()
 - pools must never exist without valid immutable PoolConfig
+
+Accounting rules:
+
 - afterSwap must never iterate all LP positions
 - accrual is always lazy
 - afterSwap must never directly accrue positions
@@ -78,29 +99,31 @@ Upcoming implementation order:
 - Use NatSpec comments for all external/public functions
 - Keep functions focused and single-responsibility
 - Avoid duplicated accounting logic
-- prefix immutable variables with i\_ example i_manager
+- Prefix immutable variables with i\_ example i_manager
 - Constants should be all upper case
 
 ---
 
-# Additional Solidity standards
+# Additional Solidity Standards
 
-Ensure sections are in this order  
-Pragma statements  
-Import statements  
-Events  
-Errors  
-Interfaces  
-Libraries  
-Contracts  
-Inside each contract, library or interface, use the following order:  
-Type declarations  
-State variables  
-Events  
-Errors  
-Modifiers  
-Functions  
-Place functions in this order  
+Ensure sections are in this order:
+Pragma statements
+Import statements
+Events
+Errors
+Interfaces
+Libraries
+Contracts
+
+Inside each contract, library or interface, use the following order:
+Type declarations
+State variables
+Events
+Errors
+Modifiers
+Functions
+
+Place functions in this order:
 Constructor
 Fallback
 Receive
@@ -109,21 +132,15 @@ Public
 Internal
 Private
 
-For section header use the following for an example
+For section headers use the following format:
 
 ```
     /*//////////////////////////////////////////////////////////////
-                                 Header description
+                             EVENTS
     //////////////////////////////////////////////////////////////*/
 ```
 
-Replace header description with the actual description - for example EVENTS
-
-```
- /*//////////////////////////////////////////////////////////////
-                                 EVENTS
-    //////////////////////////////////////////////////////////////*/
-```
+---
 
 # Hook Architecture Expectations
 
@@ -214,6 +231,10 @@ Never:
 - bypass payout caps
 - duplicate accrual logic across callbacks
 - mutate accounting state from Reactive contracts
+- treat stagePoolConfig() as internal-only (it is external, onlyOwner)
+- call setReactiveContract() more than once per pool
+- allow PoolManager.initialize() to succeed without a staged config
+- allow PoolManager.initialize() from an unauthorized caller or with wrong sqrtPrice
 
 ---
 
@@ -237,26 +258,32 @@ Do not introduce architectural changes without updating:
 - invariant-mapping.md
 - testing-strategy.md
 
+---
+
 # Implementation Order (Mandatory)
 
-1. Core accounting primitives
+1. Core accounting primitives ✅
    - \_accrue()
    - \_computeIL()
    - \_computePayout()
 
-2. Unit, fuzz, and invariant testing for each primitive
+2. Unit, fuzz, and invariant testing for each primitive ✅
 
-3. Hook callback implementation
-   - beforeInitialize()
+3. Hook pool setup functions ✅
+   - stagePoolConfig() — Phase 1: external, onlyOwner, validates and stages config
+   - \_beforeInitialize() — Phase 2: PoolManager callback, validates + commits staged config
+   - setReactiveContract() — Phase 3: external, onlyOwner, one-time reactive registration
+
+4. Hook callback implementation (current)
    - afterAddLiquidity()
    - beforeSwap()
    - afterSwap()
    - beforeRemoveLiquidity()
    - afterRemoveLiquidity()
 
-4. Callback-specific tests
+5. Callback-specific tests
 
-5. End-to-end integration testing
+6. End-to-end integration testing
 
 Do not begin implementation of a later phase until the current phase is complete and tested.
 
@@ -287,7 +314,12 @@ At the start of every session, Claude must:
 
 # Current Session State
 
-Last completed: getHookPermissions()
-Current target: \_accrue()
-Next up: \_computeIL()
-Notes: [update this before ending each session]
+Last completed: Pool setup (three-phase) — stagePoolConfig() + \_beforeInitialize() commit
++ setReactiveContract() (123 tests passing)
+Current target: afterAddLiquidity() (register position, baseline \_accrue() with dt=0)
+Next up: beforeSwap() / afterSwap()
+Notes: owner is an explicit constructor arg (salted CREATE2 routes through the canonical
+factory, so ctor msg.sender is the factory — owner must be the broadcasting EOA). Setup
+flags (\_pendingSetup / \_poolInitialized / \_reactiveSet) are internal (not private) so the
+harness subclass can assert on them; externally still opaque. onlyReactive deferred to the
+reactive-callbacks phase; no minHoldSeconds bound enforced (locked validation ladder).

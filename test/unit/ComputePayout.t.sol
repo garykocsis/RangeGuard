@@ -26,7 +26,7 @@ contract ComputePayoutTest is BaseRangeGuardTest {
 
     function setUp() public override {
         super.setUp();
-        harness = new RangeGuardHookHarness(rangeGuardHook.i_manager());
+        harness = new RangeGuardHookHarness(rangeGuardHook.i_manager(), address(this));
     }
 
     /// @dev Asserts both return values of the pure core in one call.
