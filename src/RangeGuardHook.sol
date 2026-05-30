@@ -24,6 +24,16 @@ contract RangeGuardHook is BaseHook {
                               TYPE DECLARATIONS
     //////////////////////////////////////////////////////////////*/
 
+    /// @notice Identifies which cap bound a settlement payout; reported with every settlement.
+    /// @dev    NONE is returned only when there is no impermanent loss (IL_raw == 0).
+    enum LimitingFactor {
+        NONE, // IL_raw == 0: no claim needed
+        IL_CAP, // maxPayoutPctOfIl (% of IL covered) was the binding constraint
+        COVERAGE_CAP, // earnedCoverageStable was the binding constraint
+        BUFFER_CAP // maxPayoutPctOfBuffer (% of buffer) was the binding constraint
+
+    }
+
     /// @notice Immutable configuration for a single pool, set once at initialization.
     /// @dev    All Bps values use a 10,000 denominator; APR uses 1e18 fixed-point.
     struct PoolConfig {
@@ -89,11 +99,17 @@ contract RangeGuardHook is BaseHook {
     ///         Token decimals are handled implicitly by the raw ratio (decimal-agnostic).
     uint256 internal constant PRICE_PRECISION = 1e18;
 
+    /// @notice Basis-points denominator (10,000) for all percentage caps.
+    uint256 internal constant BPS_DENOM = 10_000;
+
     /// @notice The Uniswap v4 PoolManager this hook is bound to.
     IPoolManager public immutable i_manager;
 
     /// @notice Immutable per-pool configuration, keyed by PoolId.
     mapping(PoolId => PoolConfig) public poolConfig;
+
+    /// @notice Mutable per-pool buffer accounting, keyed by PoolId.
+    mapping(PoolId => PoolState) public poolState;
 
     /// @notice Per-position state, scoped by pool then position key.
     mapping(PoolId => mapping(bytes32 => PositionState)) public positions;
@@ -356,5 +372,88 @@ contract RangeGuardHook is BaseHook {
         uint256 vActual = uint256(outAmt1) + FullMath.mulDiv(uint256(outAmt0), pExit, PRICE_PRECISION);
 
         IL_raw = vHodl > vActual ? vHodl - vActual : 0;
+    }
+
+    /// @notice Computes the capped settlement payout and the cap that bound it.
+    /// @dev    Thin storage-reading wrapper over the pure `_computePayoutAmount` core,
+    ///         mirroring the `_accrue`/`_accrueEarned` split so the cap logic lives in one
+    ///         pure, fuzzable place and the live view (future getEstimatedPayout) cannot
+    ///         drift from settlement.
+    ///
+    ///         Read-only: never mutates state, never decrements the buffer (the transfer
+    ///         and buffer update are owned by afterRemoveLiquidity), and never emits. The
+    ///         final `_accrue()` and the `minHoldSeconds` eligibility gate are the caller's
+    ///         responsibility and MUST run first; `pos.earnedCoverageStable` is therefore
+    ///         expected to already reflect the final accrual.
+    /// @param  poolId  Pool the position belongs to (selects config + buffer state).
+    /// @param  pos     Position snapshot; only `earnedCoverageStable` is read.
+    /// @param  ILRaw   Raw impermanent loss from `_computeIL()` (stable units).
+    /// @return payout  Capped payout in stable units.
+    /// @return factor  Which cap was binding (NONE only when ILRaw == 0).
+    function _computePayout(PoolId poolId, PositionState memory pos, uint256 ILRaw)
+        internal
+        view
+        returns (uint256 payout, LimitingFactor factor)
+    {
+        PoolConfig storage cfg = poolConfig[poolId];
+        return _computePayoutAmount(
+            ILRaw,
+            pos.earnedCoverageStable,
+            poolState[poolId].bufferBalanceStable,
+            cfg.maxPayoutPctOfIl,
+            cfg.maxPayoutPctOfBuffer
+        );
+    }
+
+    /// @notice Pure three-cap payout selection shared by `_computePayout` (and reusable by
+    ///         a future estimated-payout view), guaranteeing the two cannot drift.
+    /// @dev    Applies the caps in spec order and selects the minimum:
+    ///           IL_covered = ILRaw  * maxPayoutPctOfIl     / BPS_DENOM
+    ///           bufferCap  = buffer * maxPayoutPctOfBuffer / BPS_DENOM
+    ///           payout     = min(IL_covered, earned, bufferCap)
+    ///         The binding cap is reported via `factor`, with ties resolving to the earlier
+    ///         cap in the order IL_CAP -> COVERAGE_CAP -> BUFFER_CAP (strict `<`). When
+    ///         ILRaw == 0 the function short-circuits to (0, NONE) — the only NONE path.
+    ///
+    ///         Note: when ILRaw > 0 but IL_covered rounds down to 0 (tiny IL or tiny cap),
+    ///         the result is (0, IL_CAP) — a zero payout is still attributed to the IL cap,
+    ///         never NONE.
+    ///
+    ///         Multiplications use `FullMath.mulDiv`, so a 100% cap applied to a very large
+    ///         IL or buffer cannot overflow. Division rounds DOWN (conservative), matching
+    ///         the rest of the accounting. `payout <= bufferBalance` holds because
+    ///         `maxPayoutPctOfBuffer <= BPS_DENOM` is enforced at pool initialization.
+    /// @param  ILRaw                 Raw impermanent loss (stable units).
+    /// @param  earned                Earned coverage so far (stable units).
+    /// @param  bufferBalance         Current buffer balance (stable units).
+    /// @param  maxPayoutPctOfIl      Cap 1: BPS of IL covered.
+    /// @param  maxPayoutPctOfBuffer  Cap 3: BPS of buffer payable.
+    /// @return payout                Capped payout (stable units).
+    /// @return factor                Binding cap (NONE only when ILRaw == 0).
+    function _computePayoutAmount(
+        uint256 ILRaw,
+        uint256 earned,
+        uint256 bufferBalance,
+        uint16 maxPayoutPctOfIl,
+        uint16 maxPayoutPctOfBuffer
+    ) internal pure returns (uint256 payout, LimitingFactor factor) {
+        // No impermanent loss: nothing to cover, and the only path that yields NONE.
+        if (ILRaw == 0) return (0, LimitingFactor.NONE);
+
+        uint256 ilCovered = FullMath.mulDiv(ILRaw, maxPayoutPctOfIl, BPS_DENOM);
+        uint256 bufferCap = FullMath.mulDiv(bufferBalance, maxPayoutPctOfBuffer, BPS_DENOM);
+
+        // Start at cap 1, then take the running minimum, recording which cap bound.
+        // Strict `<` means ties resolve to the earlier (higher-precedence) cap.
+        payout = ilCovered;
+        factor = LimitingFactor.IL_CAP;
+        if (earned < payout) {
+            payout = earned;
+            factor = LimitingFactor.COVERAGE_CAP;
+        }
+        if (bufferCap < payout) {
+            payout = bufferCap;
+            factor = LimitingFactor.BUFFER_CAP;
+        }
     }
 }
