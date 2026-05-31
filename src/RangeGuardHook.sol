@@ -10,6 +10,7 @@ import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapD
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {LPFeeLibrary} from "v4-core/libraries/LPFeeLibrary.sol";
+import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {FullMath} from "v4-core/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/libraries/FixedPoint96.sol";
@@ -22,6 +23,7 @@ import {FixedPoint96} from "v4-core/libraries/FixedPoint96.sol";
 ///         (`_accrueEarned`) together with the minimum state required to support them.
 contract RangeGuardHook is BaseHook {
     using PoolIdLibrary for PoolKey;
+    using StateLibrary for IPoolManager;
 
     /*//////////////////////////////////////////////////////////////
                               TYPE DECLARATIONS
@@ -184,6 +186,37 @@ contract RangeGuardHook is BaseHook {
         uint256 newEarnedTotal,
         bool isInRange,
         uint256 timestamp
+    );
+
+    /// @notice Emitted on `afterAddLiquidity` when a new position is registered.
+    /// @dev    Every field is sourced from the immutable entry snapshot so the coverage
+    ///         report can render the entry line entirely from this one event. Not emitted
+    ///         on a top-up to an already-active position (the snapshot is preserved).
+    /// @param poolId               Pool the position belongs to.
+    /// @param positionKey          Position identifier within the pool.
+    /// @param owner                Position owner (the v4 `sender`; see MVP limitation).
+    /// @param tickLower            Position lower tick bound.
+    /// @param tickUpper            Position upper tick bound.
+    /// @param entryAmt0            token0 (volatile) principal deposited.
+    /// @param entryAmt1            token1 (stable) principal deposited.
+    /// @param entryNotionalStable  entryAmt1 + entryAmt0 * P_entry (stable units).
+    /// @param entryTick            Pool tick at deposit.
+    /// @param depositTime          block.timestamp at deposit.
+    /// @param coverageApr          Pool coverage APR (1e18 fixed-point) at deposit.
+    /// @param secondsPerYear       Day-count basis (A/365F or A/360) at deposit.
+    event PositionRegistered(
+        PoolId indexed poolId,
+        bytes32 indexed positionKey,
+        address indexed owner,
+        int24 tickLower,
+        int24 tickUpper,
+        uint128 entryAmt0,
+        uint128 entryAmt1,
+        uint256 entryNotionalStable,
+        int24 entryTick,
+        uint32 depositTime,
+        uint256 coverageApr,
+        uint256 secondsPerYear
     );
 
     /// @notice Emitted on `stagePoolConfig()` (Phase 1) when a config is staged or re-staged.
@@ -400,14 +433,102 @@ contract RangeGuardHook is BaseHook {
         return this.beforeRemoveLiquidity.selector;
     }
 
+    /// @notice Derives a pool-scoped, collision-resistant key for a position.
+    /// @dev    Pure. The outer `positions[poolId]` mapping prevents cross-pool collisions
+    ///         even when two pools share an identical owner, range, and salt.
+    /// @param  owner_     Position owner (the v4 `sender` for MVP).
+    /// @param  tickLower  Position lower tick bound.
+    /// @param  tickUpper  Position upper tick bound.
+    /// @param  salt       Caller-supplied salt for distinct positions at the same range.
+    /// @return The position key within a pool.
+    function _positionKey(address owner_, int24 tickLower, int24 tickUpper, bytes32 salt)
+        internal
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(owner_, tickLower, tickUpper, salt));
+    }
+
+    /// @notice Registers a new LP position and seeds its accrual baseline.
+    /// @dev    Lifecycle: requires the pool to be initialized (`PoolNotInitialized`
+    ///         otherwise). Writes the immutable entry snapshot exactly once — a top-up to an
+    ///         already-active position is a no-op for accounting (the snapshot is preserved),
+    ///         consistent with the single-range / full-withdrawal MVP scope. The snapshot
+    ///         (including `lastAccrualTime = block.timestamp`) is written BEFORE the baseline
+    ///         `_accrue()` so that call observes `dt == 0` and accrues nothing — it only
+    ///         emits the opening `AccrualUpdated` line for the coverage report.
+    ///
+    ///         MVP limitation: `owner` is the v4 `sender` (the router/caller to the
+    ///         PoolManager), not necessarily the end LP. Documented and accepted for MVP.
+    /// @param  sender  v4 caller, used as the position owner in the position key.
+    /// @param  key     Pool key (selects the initialized pool and its config).
+    /// @param  params  Liquidity params; supplies the tick range and position salt.
+    /// @param  delta   Caller balance delta (principal + fees) for this add.
+    /// @param  feesAccrued  Fees portion of `delta`; subtracted so prior fees never inflate
+    ///                      the entry snapshot (zero for a brand-new position).
     function _afterAddLiquidity(
-        address,
-        PoolKey calldata,
-        ModifyLiquidityParams calldata,
+        address sender,
+        PoolKey calldata key,
+        ModifyLiquidityParams calldata params,
         BalanceDelta delta,
-        BalanceDelta,
+        BalanceDelta feesAccrued,
         bytes calldata
     ) internal override returns (bytes4, BalanceDelta) {
+        PoolId poolId = key.toId();
+
+        // Lifecycle invariant: positions may only register on an initialized pool.
+        if (!_poolInitialized[poolId]) revert PoolNotInitialized();
+
+        bytes32 positionKey = _positionKey(sender, params.tickLower, params.tickUpper, params.salt);
+        PositionState storage pos = positions[poolId][positionKey];
+
+        // Skip re-registration: the entry snapshot is set once and never mutated. A top-up
+        // to an active position preserves the original snapshot (early-return before any
+        // state read of the pool, by design).
+        if (pos.active) {
+            return (this.afterAddLiquidity.selector, delta);
+        }
+
+        // Current pool tick at deposit: drives the entry price and the in-range status.
+        (, int24 currentTick,,) = i_manager.getSlot0(poolId);
+
+        // Effects: write the immutable snapshot and accrual baseline. `lastAccrualTime` is
+        // set to now BEFORE `_accrue()` below so the baseline call sees `dt == 0`.
+        // `earnedCoverageStable` and `pendingPayout` stay zero on the fresh slot. The entry
+        // amounts and notional are computed in a tight scope so their intermediates free
+        // before the event emission (avoids stack-too-deep without via-IR).
+        {
+            // Principal contributed by the LP, net of any fees credited in the same delta.
+            // For a fresh position `feesAccrued == 0`; the subtraction is the correct
+            // general form. Adds make the caller delta negative (tokens owed to the pool),
+            // so take the magnitude for the entry amounts.
+            BalanceDelta principal = delta - feesAccrued;
+            uint128 entryAmt0 = _absToUint128(principal.amount0());
+            uint128 entryAmt1 = _absToUint128(principal.amount1());
+
+            pos.entryAmt0 = entryAmt0;
+            pos.entryAmt1 = entryAmt1;
+            // entryNotionalStable = entryAmt1 + entryAmt0 * P_entry, using the shared
+            // `_priceFromTick` convention so entry and settlement (`_computeIL`) cannot
+            // diverge.
+            pos.entryNotionalStable =
+                uint256(entryAmt1) + FullMath.mulDiv(uint256(entryAmt0), _priceFromTick(currentTick), PRICE_PRECISION);
+        }
+
+        pos.entryTick = currentTick;
+        pos.tickLower = params.tickLower;
+        pos.tickUpper = params.tickUpper;
+        pos.depositTime = uint32(block.timestamp);
+        pos.lastAccrualTime = uint32(block.timestamp);
+        pos.active = true;
+
+        _emitPositionRegistered(poolId, positionKey, sender, pos, poolConfig[poolId]);
+
+        // Baseline accrual (dt == 0): registers the opening AccrualUpdated line; accrues
+        // nothing. Registration is unconditional — an out-of-range deposit still registers
+        // and `_accrue` gates the delta to zero.
+        _accrue(poolId, positionKey, currentTick);
+
         return (this.afterAddLiquidity.selector, delta);
     }
 
@@ -672,5 +793,54 @@ contract RangeGuardHook is BaseHook {
             payout = bufferCap;
             factor = LimitingFactor.BUFFER_CAP;
         }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                  PRIVATE
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Emits `PositionRegistered` from storage pointers.
+    /// @dev    Isolating the 12-field emit in its own stack frame keeps `_afterAddLiquidity`
+    ///         under the stack limit without via-IR. Reads the just-written snapshot and the
+    ///         pool config; performs no state changes.
+    /// @param  poolId       Pool the position belongs to.
+    /// @param  positionKey  Position identifier within the pool.
+    /// @param  owner_       Position owner (the v4 `sender` for MVP).
+    /// @param  pos          The freshly written position snapshot.
+    /// @param  cfg          The pool config (for coverageApr / secondsPerYear).
+    function _emitPositionRegistered(
+        PoolId poolId,
+        bytes32 positionKey,
+        address owner_,
+        PositionState storage pos,
+        PoolConfig storage cfg
+    ) private {
+        emit PositionRegistered(
+            poolId,
+            positionKey,
+            owner_,
+            pos.tickLower,
+            pos.tickUpper,
+            pos.entryAmt0,
+            pos.entryAmt1,
+            pos.entryNotionalStable,
+            pos.entryTick,
+            pos.depositTime,
+            cfg.coverageApr,
+            cfg.secondsPerYear
+        );
+    }
+
+    /// @notice Returns the magnitude of a signed amount as a `uint128`.
+    /// @dev    Liquidity adds yield a negative caller delta (tokens owed to the pool); the
+    ///         entry snapshot records magnitudes. Widening to `int256` before negating
+    ///         avoids the `type(int128).min` overflow edge; the magnitude of any `int128`
+    ///         fits in `uint128`.
+    /// @param  x  Signed token amount from a `BalanceDelta` leg.
+    /// @return The absolute value of `x` as a `uint128`.
+    function _absToUint128(int128 x) private pure returns (uint128) {
+        int256 v = int256(x);
+        if (v < 0) v = -v;
+        return uint128(uint256(v));
     }
 }

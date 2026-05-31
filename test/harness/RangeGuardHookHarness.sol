@@ -4,6 +4,9 @@ pragma solidity ^0.8.26;
 import {BaseHook} from "v4-hooks-public/src/base/BaseHook.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
+import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 
 import {RangeGuardHook} from "../../src/RangeGuardHook.sol";
 
@@ -41,6 +44,29 @@ contract RangeGuardHookHarness is RangeGuardHook {
     /// @notice Exposes the internal accrual engine for direct unit testing.
     function exposed_accrue(PoolId poolId, bytes32 positionKey, int24 currentTick) external {
         _accrue(poolId, positionKey, currentTick);
+    }
+
+    /// @notice Exposes the internal `_afterAddLiquidity` callback for direct unit testing.
+    /// @dev    Bypasses the PoolManager (the BaseHook `onlyPoolManager` guard wraps the
+    ///         external `afterAddLiquidity`; we drive the internal logic directly here).
+    function exposed_afterAddLiquidity(
+        address sender,
+        PoolKey calldata key,
+        ModifyLiquidityParams calldata params,
+        BalanceDelta delta,
+        BalanceDelta feesAccrued,
+        bytes calldata hookData
+    ) external returns (bytes4, BalanceDelta) {
+        return _afterAddLiquidity(sender, key, params, delta, feesAccrued, hookData);
+    }
+
+    /// @notice Exposes the internal pool-scoped position-key derivation for unit testing.
+    function exposed_positionKey(address owner_, int24 tickLower, int24 tickUpper, bytes32 salt)
+        external
+        pure
+        returns (bytes32)
+    {
+        return _positionKey(owner_, tickLower, tickUpper, salt);
     }
 
     /// @notice Exposes the internal tick->price helper for direct unit testing.

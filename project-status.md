@@ -1,6 +1,6 @@
 # RangeGuard Project Status
 
-Last Updated: 2026-05-30
+Last Updated: 2026-05-30 (Session 6 — afterAddLiquidity)
 
 ## How to use this file
 
@@ -18,40 +18,50 @@ Last Updated: 2026-05-30
 
 ## Now
 
-- **Active target:** `afterAddLiquidity()` — derive entryAmt0/entryAmt1 from the liquidity
-  delta, compute `entryNotionalStable`, register `PositionState` (active=true), call
-  `_accrue()` with dt=0 to initialize `lastAccrualTime`, emit `PositionRegistered`.
-- **Just completed:** Pool setup (three-phase) — `stagePoolConfig()` + `_beforeInitialize()`
-  commit + `setReactiveContract()`. Owner is an explicit constructor param (the salted
-  CREATE2 deploy is routed through the canonical factory, so `msg.sender` in the ctor is
-  the factory — owner must be passed as the broadcasting EOA). Setup flags
-  (`_pendingSetup`/`_poolInitialized`/`_reactiveSet`) are `internal` (not the amendment's
-  literal `private`) so the harness subclass can assert on them; externally still opaque.
-  `onlyReactive` deferred to the reactive-callbacks phase; no `minHoldSeconds` bound
-  enforced (followed the locked validation ladder).
-- **Key design points for afterAddLiquidity:**
-  - `entryNotionalStable = entryAmt1 + entryAmt0 * P_entry`, using the shared
-    `_priceFromTick()` helper at the deposit tick (same price convention as `_computeIL`).
-  - Position key derivation: `keccak256(abi.encode(owner, tickLower, tickUpper, salt))`,
-    scoped by PoolId.
-  - Requires pool `_poolInitialized[id] == true` (lifecycle invariant).
+- **Active target:** `beforeSwap()` — return the derived dynamic fee
+  (`baseLpFeeBps + bufferBps`); no position state touched, no accrual. Then `afterSwap()`
+  — buffer funding only (`bufferBalanceStable += contribution`, `BufferFunded`) +
+  `TickUpdated` for the Reactive Network; never iterate positions, never accrue.
+- **Just completed:** `afterAddLiquidity()` — `_poolInitialized` guard, position-key from the
+  v4 `sender` (MVP `owner=sender`), skip re-registration on an active position (snapshot
+  preserved), principal = `delta - feesAccrued`, live entry tick via `getSlot0`,
+  `entryNotionalStable` via the shared `_priceFromTick()`, snapshot written before the
+  `dt=0` baseline `_accrue()`, `PositionRegistered` emitted. Stack-too-deep (repo keeps
+  `via_ir=false`) handled by scoping intermediates + a `_emitPositionRegistered` helper.
+  Confirmed with user: owner=sender (MVP), skip re-registration, keep the init guard,
+  unconditional registration.
+- **Key design points for beforeSwap/afterSwap:**
+  - `dynamicFeeBps` always derived (`baseLpFeeBps + bufferBps`), never stored.
+  - `afterSwap` must NOT accrue and must NOT iterate positions (O(N) forbidden); it buffers
+    accounting and emits `TickUpdated` (lightweight, for Reactive) + `BufferFunded`.
+  - `BufferFunded` / `TickUpdated` events and the buffer-contribution math are not yet in src.
 - **Carry-ins:**
   - `poolState` mapping wired; `BPS_DENOM` + `LimitingFactor` enum live in src.
+  - Position owner attribution: production should attribute the real LP, not the v4 `sender`
+    (router). Documented MVP limitation.
   - Open sequencing question for `beforeRemoveLiquidity`: v4 withdrawn out-amounts are
     known only AFTER removal, but spec calls `_computeIL` in `beforeRemoveLiquidity` —
     resolve when wiring those callbacks. See `docs/session-4-computePayout-complete.md`.
-- **Tests:** 123 passing, 0 failing.
+- **Tests:** 140 passing, 0 failing.
 
 ---
 
 ## Completed
 
+- **afterAddLiquidity()** — position registration + `dt=0` accrual baseline. Lifecycle guard
+  (`_poolInitialized`), `owner=sender` key (MVP), re-add skip (immutable snapshot), principal =
+  `delta - feesAccrued`, live entry tick via `getSlot0`, notional via shared `_priceFromTick`,
+  `PositionRegistered` event, `_positionKey`/`_emitPositionRegistered`/`_absToUint128` helpers.
+  Full test suite: 10 unit + 3 fuzz + 3 invariant (PositionLifecycleInvariant + handler) +
+  1 integration (real PoolManager + router, live non-zero tick). (+17 tests → 140 total)
+  -> docs/session-6-afterAddLiquidity-complete.md
 - **Pool setup (three-phase)** — stagePoolConfig() + \_beforeInitialize() commit +
   setReactiveContract(); owner immutable (explicit ctor arg) + onlyOwner, hard-bound
   constants, PendingPoolSetup struct, setup mappings, 3 events, 16 errors. Full test
   suite: 32 unit + 3 fuzz (StagePoolConfigFuzz) + 6 invariant (PoolSetupInvariant +
   handler) + 4 integration (real PoolManager.initialize round-trip). Deploy script and
   harness updated for the owner ctor param. (+45 tests → 123 total)
+  -> docs/session-5-pool-setup-complete.md
 - **\_accrue()** — engine + shared pure helper \_accrueEarned(), supporting state
   (PoolConfig/PoolState/PositionState, mappings, AccrualUpdated), full test suite.
   -> docs/session-2-accrue-complete.md, docs/session1-accrue-decisions.md
@@ -80,13 +90,13 @@ Last Updated: 2026-05-30
 
 ### Phase 2: Hook Callbacks
 
-All currently PARTIAL — selector-returning skeletons only; no logic wired.
+Pool setup + afterAddLiquidity wired; remaining callbacks are selector-returning skeletons.
 
 - [x] Pool setup: stagePoolConfig() + \_beforeInitialize() commit + setReactiveContract()
       (three-phase pool bring-up; replaces original "beforeInitialize config decode" design;
       see docs/spec-amendment-beforeInitialize-config-split.md)
-- [ ] afterAddLiquidity() (register position, baseline \_accrue()) ← current
-- [ ] beforeSwap() (return derived dynamic fee)
+- [x] afterAddLiquidity() (register position, baseline \_accrue(); +17 tests, live-tick integration)
+- [ ] beforeSwap() (return derived dynamic fee) ← current
 - [ ] afterSwap() (buffer funding + TickUpdated; no accrual)
 - [ ] beforeRemoveLiquidity() (eligibility -> \_accrue -> \_computeIL -> \_computePayout)
 - [ ] afterRemoveLiquidity() (execute payout, update buffer, clear state)
