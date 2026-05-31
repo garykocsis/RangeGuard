@@ -1,6 +1,6 @@
 # RangeGuard Project Status
 
-Last Updated: 2026-05-30 (Session 6 — afterAddLiquidity)
+Last Updated: 2026-05-31 (Session 7 — beforeSwap / afterSwap)
 
 ## How to use this file
 
@@ -18,36 +18,49 @@ Last Updated: 2026-05-30 (Session 6 — afterAddLiquidity)
 
 ## Now
 
-- **Active target:** `beforeSwap()` — return the derived dynamic fee
-  (`baseLpFeeBps + bufferBps`); no position state touched, no accrual. Then `afterSwap()`
-  — buffer funding only (`bufferBalanceStable += contribution`, `BufferFunded`) +
-  `TickUpdated` for the Reactive Network; never iterate positions, never accrue.
-- **Just completed:** `afterAddLiquidity()` — `_poolInitialized` guard, position-key from the
-  v4 `sender` (MVP `owner=sender`), skip re-registration on an active position (snapshot
-  preserved), principal = `delta - feesAccrued`, live entry tick via `getSlot0`,
-  `entryNotionalStable` via the shared `_priceFromTick()`, snapshot written before the
-  `dt=0` baseline `_accrue()`, `PositionRegistered` emitted. Stack-too-deep (repo keeps
-  `via_ir=false`) handled by scoping intermediates + a `_emitPositionRegistered` helper.
-  Confirmed with user: owner=sender (MVP), skip re-registration, keep the init guard,
-  unconditional registration.
-- **Key design points for beforeSwap/afterSwap:**
-  - `dynamicFeeBps` always derived (`baseLpFeeBps + bufferBps`), never stored.
-  - `afterSwap` must NOT accrue and must NOT iterate positions (O(N) forbidden); it buffers
-    accounting and emits `TickUpdated` (lightweight, for Reactive) + `BufferFunded`.
-  - `BufferFunded` / `TickUpdated` events and the buffer-contribution math are not yet in src.
+- **Active target:** `beforeRemoveLiquidity()` — `minHoldSeconds` eligibility gate (→
+  `IneligibleClaim`, skip all accrual/IL/payout when not met), then final `_accrue()` →
+  `_computeIL()` → `_computePayout()` → store `pendingPayout`; emit `AccrualUpdated`. Then
+  `afterRemoveLiquidity()` — execute `pendingPayout`, update buffer + `totalPaidOutStable`,
+  clear state; emit `ClaimSettled` / `PartialPayout` / `NoClaim`.
+- **Just completed:** `beforeSwap()` + `afterSwap()`. `beforeSwap` (now `view`) returns the
+  derived fee `uint24(baseLpFeeBps + bufferBps) | LPFeeLibrary.OVERRIDE_FEE_FLAG` and
+  `ZERO_DELTA`; reads `poolConfig` only. `afterSwap` books a NOTIONAL buffer credit
+  `contribution = |delta.amount1()| * bufferBps / FEE_DENOM` (FEE_DENOM = 1e6, v4 pips),
+  increments `bufferBalanceStable` + `totalSkimmedStable`, emits `BufferFunded` (skipped when 0)
+  + `TickUpdated` (every swap, post-swap tick via `getSlot0`); never accrues, never iterates.
+  Confirmed with user: add OVERRIDE flag, FEE_DENOM = 1e6, skip BufferFunded on zero contribution.
+- **Locked decisions resolved this session (3 v4 risks):**
+  - **OVERRIDE_FEE_FLAG required** — without it v4 ignores the returned fee (falls back to
+    `slot0.lpFee()` == 0 on a dynamic pool). Differential integration test proves it is charged.
+  - **FEE_DENOM = 1_000_000 (v4 pips), NOT BPS_DENOM** — fee fields are pips despite "Bps" names
+    (3000 = 0.30%); `BPS_DENOM` (1e4) would credit the buffer 100× too fast. Payout caps still 1e4.
+  - **Notional buffer (MVP)** — no token delta taken; real backing via `seedBuffer()`.
 - **Carry-ins:**
-  - `poolState` mapping wired; `BPS_DENOM` + `LimitingFactor` enum live in src.
+  - `poolState`, `BPS_DENOM`, `FEE_DENOM`, `LimitingFactor`, `BufferFunded`/`TickUpdated` live in src.
   - Position owner attribution: production should attribute the real LP, not the v4 `sender`
     (router). Documented MVP limitation.
-  - Open sequencing question for `beforeRemoveLiquidity`: v4 withdrawn out-amounts are
-    known only AFTER removal, but spec calls `_computeIL` in `beforeRemoveLiquidity` —
-    resolve when wiring those callbacks. See `docs/session-4-computePayout-complete.md`.
-- **Tests:** 140 passing, 0 failing.
+  - **Open sequencing question for `beforeRemoveLiquidity` (active next):** v4 withdrawn
+    out-amounts are known only AFTER removal, but spec calls `_computeIL` in
+    `beforeRemoveLiquidity` — likely compute IL/payout in `afterRemoveLiquidity` from realized
+    out-amounts. See `docs/session-4-computePayout-complete.md`.
+  - `afterRemoveLiquidity` is where the notional buffer meets real custody — confirm
+    payout-vs-`bufferBalanceStable` solvency handling. `seedBuffer()` still to implement.
+- **Tests:** 161 passing, 0 failing.
 
 ---
 
 ## Completed
 
+- **beforeSwap() / afterSwap()** — swap-path callbacks. `beforeSwap` (`view`) returns the derived
+  dynamic fee `(baseLpFeeBps + bufferBps) | OVERRIDE_FEE_FLAG` + `ZERO_DELTA`, reads `poolConfig`
+  only. `afterSwap` books the notional buffer credit (`|delta.amount1()| * bufferBps / FEE_DENOM`,
+  FEE_DENOM = 1e6), increments `bufferBalanceStable` + `totalSkimmedStable`, emits `BufferFunded`
+  (skipped on zero) + `TickUpdated` (every swap); no accrual, no position iteration. Added
+  `FEE_DENOM` constant + two events; reused `_absToUint128`. Full test suite: 13 unit + 3 fuzz +
+  3 invariant (BufferFundingInvariant + handler) + 2 integration (real swap + differential
+  fee-override proof). (+21 tests → 161 total)
+  -> docs/session-7-beforeSwap-afterSwap-complete.md
 - **afterAddLiquidity()** — position registration + `dt=0` accrual baseline. Lifecycle guard
   (`_poolInitialized`), `owner=sender` key (MVP), re-add skip (immutable snapshot), principal =
   `delta - feesAccrued`, live entry tick via `getSlot0`, notional via shared `_priceFromTick`,
@@ -96,9 +109,9 @@ Pool setup + afterAddLiquidity wired; remaining callbacks are selector-returning
       (three-phase pool bring-up; replaces original "beforeInitialize config decode" design;
       see docs/spec-amendment-beforeInitialize-config-split.md)
 - [x] afterAddLiquidity() (register position, baseline \_accrue(); +17 tests, live-tick integration)
-- [ ] beforeSwap() (return derived dynamic fee) ← current
-- [ ] afterSwap() (buffer funding + TickUpdated; no accrual)
-- [ ] beforeRemoveLiquidity() (eligibility -> \_accrue -> \_computeIL -> \_computePayout)
+- [x] beforeSwap() (return derived dynamic fee + OVERRIDE flag; view, no state touched)
+- [x] afterSwap() (notional buffer funding + TickUpdated; no accrual, no iteration; +21 tests)
+- [ ] beforeRemoveLiquidity() (eligibility -> \_accrue -> \_computeIL -> \_computePayout) ← current
 - [ ] afterRemoveLiquidity() (execute payout, update buffer, clear state)
 
 ### Phase 3: Integration Testing
