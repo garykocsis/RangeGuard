@@ -5,8 +5,9 @@ import {BaseHook} from "v4-hooks-public/src/base/BaseHook.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
+import {ModifyLiquidityParams, SwapParams} from "v4-core/types/PoolOperation.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
+import {BeforeSwapDelta} from "v4-core/types/BeforeSwapDelta.sol";
 
 import {RangeGuardHook} from "../../src/RangeGuardHook.sol";
 
@@ -58,6 +59,27 @@ contract RangeGuardHookHarness is RangeGuardHook {
         bytes calldata hookData
     ) external returns (bytes4, BalanceDelta) {
         return _afterAddLiquidity(sender, key, params, delta, feesAccrued, hookData);
+    }
+
+    /// @notice Exposes the internal `_beforeSwap` callback for direct unit testing.
+    function exposed_beforeSwap(
+        address sender,
+        PoolKey calldata key,
+        SwapParams calldata params,
+        bytes calldata hookData
+    ) external view returns (bytes4, BeforeSwapDelta, uint24) {
+        return _beforeSwap(sender, key, params, hookData);
+    }
+
+    /// @notice Exposes the internal `_afterSwap` callback for direct unit testing.
+    function exposed_afterSwap(
+        address sender,
+        PoolKey calldata key,
+        SwapParams calldata params,
+        BalanceDelta delta,
+        bytes calldata hookData
+    ) external returns (bytes4, int128) {
+        return _afterSwap(sender, key, params, delta, hookData);
     }
 
     /// @notice Exposes the internal pool-scoped position-key derivation for unit testing.

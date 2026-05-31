@@ -148,6 +148,14 @@ uint16  constant MAX_PAYOUT_PCT          = 10_000;
 uint32  constant MAX_HOLD_SECONDS        = 365 days;
 uint256 constant SECONDS_PER_YEAR_365F   = 31_536_000;
 uint256 constant SECONDS_PER_YEAR_360    = 31_104_000;
+// Fee pip denominator — distinct from BPS_DENOM
+// v4 expresses fees in pips (1e6), NOT basis points (1e4).
+// baseLpFeeBps and bufferBps field names are a misnomer —
+// they hold pip values. e.g. 3000 = 0.30%, 1000 = 0.10%.
+// Buffer contribution: stableVolume * bufferBps / FEE_DENOM
+// Payout caps (maxPayoutPctOfIl, maxPayoutPctOfBuffer) use
+// BPS_DENOM (1e4). Never use BPS_DENOM for fee math.
+uint256 constant FEE_DENOM               = 1_000_000;
 ```
 
 ### Initialization Functions (Three-Phase Setup)

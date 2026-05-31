@@ -38,19 +38,20 @@ Completed (Phase 2 — hook callbacks):
 - Pool setup functions: stagePoolConfig() + \_beforeInitialize() + setReactiveContract()
   (three-phase bring-up; owner as explicit constructor arg)
 - afterAddLiquidity() (register position + dt=0 accrual baseline; owner=sender MVP,
-  re-add skip, live entry tick via getSlot0, PositionRegistered; 140 tests passing)
+  re-add skip, live entry tick via getSlot0, PositionRegistered)
+- beforeSwap() / afterSwap() (derived fee + OVERRIDE_FEE_FLAG; notional buffer funding via
+  FEE_DENOM=1e6 v4 pips, BufferFunded + TickUpdated; no accrual, no iteration; 161 tests passing)
 
 Current implementation target:
 
-- beforeSwap() / afterSwap()
+- beforeRemoveLiquidity() / afterRemoveLiquidity()
 
 Upcoming implementation order:
 
-1. beforeSwap() / afterSwap() ← current
-2. beforeRemoveLiquidity() / afterRemoveLiquidity()
-3. checkpoint()
-4. Reactive Network contract
-5. Frontend dashboard
+1. beforeRemoveLiquidity() / afterRemoveLiquidity() ← current
+2. checkpoint()
+3. Reactive Network contract
+4. Frontend dashboard
 
 ---
 
@@ -277,9 +278,9 @@ Do not introduce architectural changes without updating:
 
 4. Hook callback implementation (current)
    - afterAddLiquidity() ✅ (register position + dt=0 baseline)
-   - beforeSwap() ← current
-   - afterSwap()
-   - beforeRemoveLiquidity()
+   - beforeSwap() ✅ (derived fee + OVERRIDE flag; view, no state touched)
+   - afterSwap() ✅ (notional buffer funding + TickUpdated; no accrual, no iteration)
+   - beforeRemoveLiquidity() ← current
    - afterRemoveLiquidity()
 
 5. Callback-specific tests
@@ -315,14 +316,21 @@ At the start of every session, Claude must:
 
 # Current Session State
 
-Last completed: afterAddLiquidity() — position registration + dt=0 accrual baseline
-(140 tests passing). See docs/session-6-afterAddLiquidity-complete.md.
-Current target: beforeSwap() (return derived dynamic fee), then afterSwap() (buffer
-funding + TickUpdated; no accrual, no position iteration).
-Next up: beforeRemoveLiquidity() / afterRemoveLiquidity()
-Notes: afterAddLiquidity uses owner=sender (the v4 router/caller, MVP limitation — production
-should attribute the real LP); skips re-registration on an active position to keep the entry
-snapshot immutable; reads the live entry tick via getSlot0 (StateLibrary); writes the snapshot
-with lastAccrualTime=now BEFORE the baseline \_accrue() so dt=0. Stack-too-deep avoided by
-scoping intermediates + a \_emitPositionRegistered helper (repo keeps via_ir=false). Carry-in:
-\_computeIL sequencing in beforeRemoveLiquidity (v4 out-amounts known only after removal).
+Last completed: beforeSwap() + afterSwap() — derived dynamic fee and notional buffer funding
+(161 tests passing). See docs/session-7-beforeSwap-afterSwap-complete.md.
+Current target: beforeRemoveLiquidity() (minHoldSeconds gate -> final \_accrue -> \_computeIL ->
+\_computePayout -> store pendingPayout), then afterRemoveLiquidity() (execute payout, update
+buffer + totalPaidOutStable, clear state; ClaimSettled / PartialPayout / NoClaim).
+Next up: checkpoint(), then the Reactive Network contract.
+Notes: beforeSwap is `view`, reads poolConfig only, returns
+`uint24(baseLpFeeBps + bufferBps) | LPFeeLibrary.OVERRIDE_FEE_FLAG` + ZERO_DELTA — the OVERRIDE
+flag is mandatory or v4 falls back to slot0.lpFee()==0 on a dynamic pool. afterSwap books a
+NOTIONAL buffer credit `|delta.amount1()| * bufferBps / FEE_DENOM` with FEE_DENOM=1_000_000 (v4
+pips — fee fields are pips despite the "Bps" names; BPS_DENOM=1e4 is ONLY for payout caps),
+increments bufferBalanceStable + totalSkimmedStable, emits BufferFunded (skipped on zero) +
+TickUpdated (every swap, post-swap tick via getSlot0); never accrues, never iterates positions.
+No token delta taken (notional buffer; real backing via seedBuffer(), still to implement).
+Carry-ins: \_computeIL sequencing in beforeRemoveLiquidity (v4 out-amounts known only AFTER
+removal — likely compute IL/payout in afterRemoveLiquidity); afterRemoveLiquidity is where the
+notional buffer meets real custody (confirm payout-vs-bufferBalanceStable solvency); position
+owner=sender remains an MVP limitation.

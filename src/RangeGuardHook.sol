@@ -118,6 +118,14 @@ contract RangeGuardHook is BaseHook {
     /// @notice Basis-points denominator (10,000) for all percentage caps.
     uint256 internal constant BPS_DENOM = 10_000;
 
+    /// @notice Fee denominator (1,000,000) for swap-fee math, matching v4's pip units.
+    /// @dev    v4 fees are hundredths of a bip: `LPFeeLibrary.MAX_LP_FEE == 1_000_000` is
+    ///         100%, so the config's `baseLpFeeBps`/`bufferBps` (e.g. 3000 = 0.30%) are
+    ///         pips, NOT true basis points despite the field names. Buffer-contribution
+    ///         math therefore divides by this, NOT `BPS_DENOM`; using 10,000 would credit
+    ///         the buffer 100x too fast. Payout-cap percentages remain `BPS_DENOM`-based.
+    uint256 internal constant FEE_DENOM = 1_000_000;
+
     /// @notice Maximum LP fee portion accepted at staging (10,000 bps = 100%).
     uint24 internal constant MAX_BASE_FEE_BPS = 10_000;
 
@@ -229,6 +237,23 @@ contract RangeGuardHook is BaseHook {
 
     /// @notice Emitted on `setReactiveContract()` (Phase 3) when the reactive address is locked.
     event ReactiveContractSet(PoolId indexed poolId, address reactive);
+
+    /// @notice Emitted on `afterSwap` when a swap funds the buffer (skipped on zero contribution).
+    /// @dev    The contribution is a NOTIONAL credit (no token delta is taken in MVP — the buffer
+    ///         is internal accounting; real backing comes from `seedBuffer()`). The buffer grows
+    ///         from every swap regardless of whether any position is in range.
+    /// @param poolId            Pool the swap belongs to.
+    /// @param contribution      Buffer credit from this swap (stable units).
+    /// @param newBufferBalance  Buffer balance after the credit (stable units).
+    event BufferFunded(PoolId indexed poolId, uint256 contribution, uint256 newBufferBalance);
+
+    /// @notice Emitted on every `afterSwap` with the post-swap tick, for Reactive Network subscription.
+    /// @dev    Lightweight by design: the Reactive contract derives per-position range crossings
+    ///         off this event. The hook never iterates positions here.
+    /// @param poolId     Pool the swap belongs to.
+    /// @param newTick    Pool tick after the swap (read via `getSlot0`).
+    /// @param timestamp  block.timestamp at the swap.
+    event TickUpdated(PoolId indexed poolId, int24 newTick, uint256 timestamp);
 
     /*//////////////////////////////////////////////////////////////
                                    ERRORS
@@ -543,19 +568,63 @@ contract RangeGuardHook is BaseHook {
         return (this.afterRemoveLiquidity.selector, delta);
     }
 
-    function _beforeSwap(address, PoolKey calldata, SwapParams calldata, bytes calldata)
+    /// @notice Returns the per-swap dynamic LP fee; touches no position or accounting state.
+    /// @dev    The fee is always DERIVED (`baseLpFeeBps + bufferBps`) and never stored, so it
+    ///         cannot drift from the config. The value is OR'd with `LPFeeLibrary.OVERRIDE_FEE_FLAG`
+    ///         so the PoolManager applies it for this swap; without the flag v4 would fall back to
+    ///         `slot0.lpFee()`, which is 0 on a dynamic-fee pool. Both config fields are bounded at
+    ///         staging (sum <= MAX_BASE_FEE_BPS + MAX_BUFFER_BPS = 15_000), well under `MAX_LP_FEE`.
+    ///         No `BeforeSwapDelta` is taken (`ZERO_DELTA`): the buffer credit is notional and is
+    ///         booked in `_afterSwap`, not skimmed from token flows.
+    /// @param  key  Pool key; selects the immutable config to derive the fee from.
+    /// @return The `beforeSwap` selector, a zero swap delta, and the override-flagged dynamic fee.
+    function _beforeSwap(address, PoolKey calldata key, SwapParams calldata, bytes calldata)
         internal
+        view
         override
         returns (bytes4, BeforeSwapDelta, uint24)
     {
-        return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        PoolConfig storage cfg = poolConfig[key.toId()];
+        uint24 derivedFee = uint24(cfg.baseLpFeeBps + cfg.bufferBps) | LPFeeLibrary.OVERRIDE_FEE_FLAG;
+        return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, derivedFee);
     }
 
-    function _afterSwap(address, PoolKey calldata, SwapParams calldata, BalanceDelta, bytes calldata)
+    /// @notice Books the buffer contribution from a swap and emits the lightweight tick update.
+    /// @dev    Buffer funding ONLY — never accrues a position and never iterates the LP set
+    ///         (O(N) forbidden in the swap path). The contribution is the `bufferBps` share of the
+    ///         swap's stable-leg (token1, the numeraire) volume, so no price conversion is needed:
+    ///           contribution = |delta.amount1()| * bufferBps / FEE_DENOM   (truncates down)
+    ///         The credit is notional (no token delta taken; real backing comes from `seedBuffer()`)
+    ///         and grows the buffer on EVERY swap regardless of any position's range status.
+    ///         `BufferFunded` is skipped when the contribution rounds to zero (no storage write);
+    ///         `TickUpdated` is emitted on every swap. The post-swap tick is read via `getSlot0`.
+    /// @param  key    Pool key; selects the pool's config and buffer state.
+    /// @param  delta  Swap balance delta; only the stable leg (`amount1`) is read, as a magnitude.
+    /// @return The `afterSwap` selector and a zero hook delta (no token taken from the swap).
+    function _afterSwap(address, PoolKey calldata key, SwapParams calldata, BalanceDelta delta, bytes calldata)
         internal
         override
         returns (bytes4, int128)
     {
+        PoolId poolId = key.toId();
+
+        // Stable-leg volume (numeraire); FullMath guards the max-uint128 * bufferBps product.
+        uint256 stableVolume = _absToUint128(delta.amount1());
+        uint256 contribution = FullMath.mulDiv(stableVolume, poolConfig[poolId].bufferBps, FEE_DENOM);
+
+        // Effects: only write when the contribution is non-zero (minimize storage writes).
+        if (contribution > 0) {
+            PoolState storage state = poolState[poolId];
+            uint256 newBufferBalance = state.bufferBalanceStable + contribution;
+            state.bufferBalanceStable = newBufferBalance;
+            state.totalSkimmedStable += contribution;
+            emit BufferFunded(poolId, contribution, newBufferBalance);
+        }
+
+        // Lightweight tick update for the Reactive Network, emitted on every swap.
+        (, int24 newTick,,) = i_manager.getSlot0(poolId);
+        emit TickUpdated(poolId, newTick, block.timestamp);
+
         return (this.afterSwap.selector, 0);
     }
 

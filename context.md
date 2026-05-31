@@ -15,31 +15,29 @@ Completed:
 - getHookPermissions() in test/unit
 - deployment script
 - BaseRangeGuardTest.t.sol in test/shared
-- spec.md
-- state-machine.md
-- invariant-mapping.md
-- testing-strategy.md
+- spec.md, state-machine.md, invariant-mapping.md, testing-strategy.md
+- \_accrue(), \_computeIL(), \_computePayout() (Phase 1 complete)
+- Pool setup: stagePoolConfig + \_beforeInitialize + setReactiveContract
+- afterAddLiquidity()
+- beforeSwap() / afterSwap()
 
 Next implementation target:
 
-- stagePoolConfig() + \_beforeInitialize() + setReactiveContract()
+- beforeRemoveLiquidity() / afterRemoveLiquidity()
 
 Planned next steps:
 
-- afterAddLiquidity()
-- beforeSwap() / afterSwap()
-- beforeRemoveLiquidity() / afterRemoveLiquidity()
+- beforeRemoveLiquidity() / afterRemoveLiquidity() ← current
 - checkpoint()
 - Reactive contract
 - Frontend dashboard
 
 Recent architecture update:
 
-- v4 beforeInitialize has no hookData --- pool config cannot be passed through the callback
-- Three-phase pool setup introduced: stagePoolConfig (Phase 1) -> \_beforeInitialize commit (Phase 2) -> setReactiveContract (Phase 3)
-- Reactive contract has circular deployment dependency with hook --- registration deferred to Phase 3
-- \_reactiveSet guard ensures reactive address is set exactly once and permanently locked
-- authorizedInitializer and expectedSqrtPriceX96 stored in PendingPoolSetup to prevent unauthorized or wrong-price initialization
+- Two-denominator system: fee fields (baseLpFeeBps, bufferBps) use
+  FEE_DENOM = 1_000_000 (v4 pips); payout caps use BPS_DENOM = 10_000
+- beforeSwap must return fee | OVERRIDE_FEE_FLAG or v4 ignores it
+- See session docs for full decision history
 
 ## 3. Related Documents
 
@@ -208,6 +206,12 @@ uint16  MAX_PAYOUT_PCT          = 10_000
 uint32  MAX_HOLD_SECONDS        = 365 days
 uint256 SECONDS_PER_YEAR_365F   = 31_536_000
 uint256 SECONDS_PER_YEAR_360    = 31_104_000
+// TWO-DENOMINATOR SYSTEM (critical):
+// Fee fields (baseLpFeeBps, bufferBps) → use FEE_DENOM (1e6)
+//   buffer contribution = stableVolume * bufferBps / FEE_DENOM
+// Payout caps (maxPayoutPctOfIl, maxPayoutPctOfBuffer) → use BPS_DENOM (1e4)
+//   bufferCap = bufferBalance * maxPayoutPctOfBuffer / BPS_DENOM
+// Mixing these denominators causes 100x errors in buffer accumulation.
 
 // Protocol owner --- gates stagePoolConfig() and setReactiveContract()
 address immutable owner
