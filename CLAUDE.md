@@ -33,23 +33,24 @@ Completed (Phase 1):
 - \_computeIL()
 - \_computePayout()
 
-Completed (Phase 2 — pool setup):
+Completed (Phase 2 — hook callbacks):
 
 - Pool setup functions: stagePoolConfig() + \_beforeInitialize() + setReactiveContract()
-  (three-phase bring-up; owner as explicit constructor arg; 123 tests passing)
+  (three-phase bring-up; owner as explicit constructor arg)
+- afterAddLiquidity() (register position + dt=0 accrual baseline; owner=sender MVP,
+  re-add skip, live entry tick via getSlot0, PositionRegistered; 140 tests passing)
 
 Current implementation target:
 
-- afterAddLiquidity()
+- beforeSwap() / afterSwap()
 
 Upcoming implementation order:
 
-1. afterAddLiquidity() ← current
-2. beforeSwap() / afterSwap()
-3. beforeRemoveLiquidity() / afterRemoveLiquidity()
-4. checkpoint()
-5. Reactive Network contract
-6. Frontend dashboard
+1. beforeSwap() / afterSwap() ← current
+2. beforeRemoveLiquidity() / afterRemoveLiquidity()
+3. checkpoint()
+4. Reactive Network contract
+5. Frontend dashboard
 
 ---
 
@@ -275,8 +276,8 @@ Do not introduce architectural changes without updating:
    - setReactiveContract() — Phase 3: external, onlyOwner, one-time reactive registration
 
 4. Hook callback implementation (current)
-   - afterAddLiquidity()
-   - beforeSwap()
+   - afterAddLiquidity() ✅ (register position + dt=0 baseline)
+   - beforeSwap() ← current
    - afterSwap()
    - beforeRemoveLiquidity()
    - afterRemoveLiquidity()
@@ -314,12 +315,14 @@ At the start of every session, Claude must:
 
 # Current Session State
 
-Last completed: Pool setup (three-phase) — stagePoolConfig() + \_beforeInitialize() commit
-+ setReactiveContract() (123 tests passing)
-Current target: afterAddLiquidity() (register position, baseline \_accrue() with dt=0)
-Next up: beforeSwap() / afterSwap()
-Notes: owner is an explicit constructor arg (salted CREATE2 routes through the canonical
-factory, so ctor msg.sender is the factory — owner must be the broadcasting EOA). Setup
-flags (\_pendingSetup / \_poolInitialized / \_reactiveSet) are internal (not private) so the
-harness subclass can assert on them; externally still opaque. onlyReactive deferred to the
-reactive-callbacks phase; no minHoldSeconds bound enforced (locked validation ladder).
+Last completed: afterAddLiquidity() — position registration + dt=0 accrual baseline
+(140 tests passing). See docs/session-6-afterAddLiquidity-complete.md.
+Current target: beforeSwap() (return derived dynamic fee), then afterSwap() (buffer
+funding + TickUpdated; no accrual, no position iteration).
+Next up: beforeRemoveLiquidity() / afterRemoveLiquidity()
+Notes: afterAddLiquidity uses owner=sender (the v4 router/caller, MVP limitation — production
+should attribute the real LP); skips re-registration on an active position to keep the entry
+snapshot immutable; reads the live entry tick via getSlot0 (StateLibrary); writes the snapshot
+with lastAccrualTime=now BEFORE the baseline \_accrue() so dt=0. Stack-too-deep avoided by
+scoping intermediates + a \_emitPositionRegistered helper (repo keeps via_ir=false). Carry-in:
+\_computeIL sequencing in beforeRemoveLiquidity (v4 out-amounts known only after removal).
