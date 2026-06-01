@@ -1,4 +1,4 @@
-## Purpose
+# Purpose
 
 This document defines the core protocol invariants for RangeGuard.
 
@@ -31,7 +31,6 @@ preserve these invariants under all valid execution paths.
 - `earnedCoverageStable` must never decrease
 - `earnedCoverageStable` must never exceed the configured accrual ceiling
 - inactive positions must never accrue coverage
-- `pendingPayout` must never be negative
 - `bufferBalanceStable` must never be negative
 - accrual must never modify entry position snapshots
 - `lastAccrualTime` must monotonically increase
@@ -69,8 +68,21 @@ preserve these invariants under all valid execution paths.
 - payout must never exceed the configured payout caps
 - positions failing `minHoldSeconds` eligibility must always receive zero payout
 - settlement must never modify immutable entry snapshots
-- `pendingPayout` must be cleared after settlement
-- cleared positions must never retain payout state
+- cleared positions must never retain active status or accrual state
+- settlement is atomic in `afterRemoveLiquidity`: final `_accrue`,
+  `_computeIL`, `_computePayout`, position cleanup, and payout transfer
+  all occur in a single callback — no intermediate persistent settlement state exists
+- strict CEI: `PositionState` must be cleared (active=false) and buffer
+  accounting updated (`bufferBalanceStable -= payout`, `totalPaidOutStable += payout`)
+  BEFORE the payout token transfer executes
+- `NoClaim` is emitted strictly when `IL_raw == 0`
+- `PartialPayout` is emitted when `IL_raw > 0` but payout is below full
+  eligible coverage (any binding cap, including `payout == 0`)
+- `ClaimSettled` is emitted only when `IL_CAP` is the binding constraint
+  and `payout > 0`
+- `IneligibleClaim` is emitted in `afterRemoveLiquidity` when
+  `minHoldSeconds` is not met; the position is cleared and no accrual,
+  IL, or payout computation occurs
 
 ---
 
@@ -116,11 +128,8 @@ These invariants govern the three-phase pool initialization sequence.
 - `_beforeInitialize` must revert if `sqrtPriceX96 != _pendingSetup[id].expectedSqrtPriceX96`
   (`UnexpectedSqrtPrice`)
 - `_poolInitialized[id] == true` must imply `_pendingSetup[id].exists == false`
-  (pending setup deleted atomically on commit)
 - `_poolInitialized[id] == true` must imply `poolConfig[id].admin != address(0)`
-  (config was validly committed)
 - `_poolInitialized[id] == true` must imply `poolConfig[id].maxPayoutPctOfBuffer <= BPS_DENOM`
-- pool initialization must be triggered by `authorizedInitializer` at exactly `expectedSqrtPriceX96`
 
 ## Reactive registration invariants (Phase 3)
 
@@ -129,7 +138,6 @@ These invariants govern the three-phase pool initialization sequence.
 - `setReactiveContract()` must reject second calls (`ReactiveAlreadySet`)
 - `_reactiveSet[id] == true` must imply `reactiveContract[id] != address(0)`
 - `_reactiveSet[id] == true` must imply `_poolInitialized[id] == true`
-  (reactive can only be set on an already-initialized pool)
 - `_reactiveSet[id]` is monotonically true — once set, it can never return to false
 
 ---
@@ -140,11 +148,9 @@ These invariants govern the three-phase pool initialization sequence.
 - initialized pools must always have valid immutable `PoolConfig`
 - partially initialized pools must never exist — `_beforeInitialize` is the
   atomic commit point; if it reverts, the pool is never created in PoolManager
-- `PoolConfig` commit must occur exactly once per pool (enforced by `_poolInitialized`
-  guard — `stagePoolConfig()` reverts on already-initialized pools)
+- `PoolConfig` commit must occur exactly once per pool
 - `reactiveContract[poolId]` registration occurs in Phase 3 (`setReactiveContract()`),
-  NOT during `_beforeInitialize` — `reactiveContract[poolId]` is `address(0)` immediately
-  after initialization and before `setReactiveContract()` is called
+  NOT during `_beforeInitialize`
 
 ---
 
@@ -153,15 +159,19 @@ These invariants govern the three-phase pool initialization sequence.
 - inactive positions must never accrue coverage
 - inactive positions must never checkpoint
 - inactive positions must never settle
-- cleared positions must never retain payout state
-- cleared positions must never retain active status
-- pending settlements must never continue accruing coverage
-- settlement must always finalize before cleanup
+- cleared positions must never retain active status or accrual state
+- settlement is atomic — no persistent intermediate settlement state exists between
+  `beforeRemoveLiquidity` (validation only) and `afterRemoveLiquidity` (full settlement)
+- `beforeRemoveLiquidity` performs validation only: active check and full-withdrawal
+  enforcement. It does not transition position state.
+- `afterRemoveLiquidity` is the single settlement point: accrual, IL, payout,
+  cleanup, and transfer all complete atomically within this callback
 - active positions must always have valid entry snapshots
 - active positions must always have initialized accrual state
 - positions must never transition directly from Cleared to active
+- one add per position (MVP): `afterAddLiquidity` reverts `PositionAlreadyRegistered`
+  if the position key already exists and is active
 - position registration (`afterAddLiquidity`) requires pool to be initialized
-  (`_poolInitialized[id] == true`)
 
 ---
 
@@ -172,7 +182,9 @@ These invariants govern the three-phase pool initialization sequence.
 - zero `dt` must always produce zero accrual delta
 - `checkpoint()` must enforce `minCheckpointInterval`
 - accrual calculations must always use `block.timestamp` as the current time reference
-- settlement accrual must always occur before payout computation
-- `minHoldSeconds` eligibility must always be evaluated before payout computation
+- final accrual (`_accrue`) must always occur before IL and payout computation
+  within `afterRemoveLiquidity`
+- `minHoldSeconds` eligibility must always be evaluated before accrual, IL,
+  and payout computation in `afterRemoveLiquidity`
 - accrual calculations must never use stale range status
 - checkpoints must never create overlapping accrual periods

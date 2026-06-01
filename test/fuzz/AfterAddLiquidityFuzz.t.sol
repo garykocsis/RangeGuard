@@ -123,19 +123,25 @@ contract AfterAddLiquidityFuzzTest is BaseRangeGuardTest {
         assertGe(nLarge, nSmall, "notional monotonic in stable leg");
     }
 
-    /// Why: re-adding to an active position must never mutate the immutable entry snapshot,
-    /// regardless of the second add's amounts.
-    function testFuzz_AfterAddLiquidity_ReAddNeverMutatesSnapshot(uint128 amt0b, uint128 amt1b) public {
+    /// Why: re-adding to an active position must revert (one add per position, MVP) and must
+    /// never mutate the immutable entry snapshot, regardless of the second add's amounts.
+    function testFuzz_AfterAddLiquidity_ReAddReverts(uint128 amt0b, uint128 amt1b) public {
         amt0b = uint128(bound(amt0b, 0, uint128(type(int128).max)));
         amt1b = uint128(bound(amt1b, 0, uint128(type(int128).max)));
 
         bytes32 posKey = _register(address(0xB1), 3e18, 5_000e6, -100, 100, bytes32(uint256(9)));
         RangeGuardHook.PositionState memory before = harness.getPosition(poolId, posKey);
 
-        // Second add at the same (owner, range, salt) -> same key -> must be a no-op.
-        _register(address(0xB1), amt0b, amt1b, -100, 100, bytes32(uint256(9)));
-        RangeGuardHook.PositionState memory afterPos = harness.getPosition(poolId, posKey);
+        // Second add at the same (owner, range, salt) -> same key -> must revert.
+        ModifyLiquidityParams memory p =
+            ModifyLiquidityParams({tickLower: -100, tickUpper: 100, liquidityDelta: 1, salt: bytes32(uint256(9))});
+        vm.expectRevert(RangeGuardHook.PositionAlreadyRegistered.selector);
+        harness.exposed_afterAddLiquidity(
+            address(0xB1), poolKey, p, toBalanceDelta(-int128(amt0b), -int128(amt1b)), toBalanceDelta(0, 0), ""
+        );
 
+        // Snapshot untouched after the revert.
+        RangeGuardHook.PositionState memory afterPos = harness.getPosition(poolId, posKey);
         assertEq(afterPos.entryAmt0, before.entryAmt0, "entryAmt0 immutable");
         assertEq(afterPos.entryAmt1, before.entryAmt1, "entryAmt1 immutable");
         assertEq(afterPos.entryNotionalStable, before.entryNotionalStable, "notional immutable");

@@ -51,7 +51,6 @@ contract BufferFundingInvariant is BaseRangeGuardTest {
         RangeGuardHook.PositionState memory pos = harness.getPosition(handler.poolId(), handler.seededKey());
         assertEq(pos.earnedCoverageStable, handler.SEEDED_COVERAGE(), "afterSwap must not accrue coverage");
         assertEq(pos.lastAccrualTime, handler.SEEDED_CLOCK(), "afterSwap must not advance the accrual clock");
-        assertEq(pos.pendingPayout, 0, "afterSwap must not create a pending payout");
         assertTrue(pos.active, "afterSwap must not deactivate the position");
     }
 }

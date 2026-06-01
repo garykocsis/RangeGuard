@@ -17,9 +17,11 @@ import {RangeGuardHookHarness} from "../../harness/RangeGuardHookHarness.sol";
 /// @title AfterAddLiquidityHandler
 /// @notice Invariant-test handler that drives RangeGuardHook._afterAddLiquidity() with
 ///         randomized owners, amounts, ranges, and salts against a single committed pool,
-///         while advancing time. A small key space forces frequent re-adds (top-ups), which
-///         must be no-ops. The first registration of each key is captured into a ghost
-///         snapshot so the invariant suite can prove entry snapshots never mutate.
+///         while advancing time. A small key space forces frequent key collisions; since MVP
+///         allows one add per position (a re-add reverts `PositionAlreadyRegistered`), the
+///         handler registers each key exactly once and skips collisions. The first registration
+///         of each key is captured into a ghost snapshot so the invariant suite can prove entry
+///         snapshots never mutate.
 /// @dev    The underlying PoolManager pool is never initialized, so getSlot0 returns tick 0;
 ///         the lifecycle properties asserted here are independent of the entry tick.
 contract AfterAddLiquidityHandler is Test {
@@ -81,7 +83,10 @@ contract AfterAddLiquidityHandler is Test {
         cfg.admin = address(0xA11CE);
     }
 
-    /// @notice The single fuzzed action: advance time, then register (or re-add) a position.
+    /// @notice The single fuzzed action: advance time, then register a not-yet-seen position.
+    /// @dev    Key collisions are skipped (one add per position, MVP) so the handler never
+    ///         triggers the `PositionAlreadyRegistered` revert; re-add rejection is covered by
+    ///         the dedicated unit/fuzz tests.
     function register(
         uint256 ownerSeed,
         uint256 rangeSeed,
@@ -102,20 +107,22 @@ contract AfterAddLiquidityHandler is Test {
         amt0 = uint128(bound(amt0, 0, uint128(type(int128).max)));
         amt1 = uint128(bound(amt1, 0, uint128(type(int128).max)));
 
+        bytes32 posKey = harness.exposed_positionKey(owner_, lower, upper, salt);
+        ghost_calls++;
+
+        // One add per position: only the first registration of a key is permitted.
+        if (_seen[posKey]) return;
+
         ModifyLiquidityParams memory p =
             ModifyLiquidityParams({tickLower: lower, tickUpper: upper, liquidityDelta: 1, salt: salt});
         harness.exposed_afterAddLiquidity(
             owner_, poolKey, p, toBalanceDelta(-int128(amt0), -int128(amt1)), toBalanceDelta(0, 0), ""
         );
 
-        bytes32 posKey = harness.exposed_positionKey(owner_, lower, upper, salt);
-        if (!_seen[posKey]) {
-            _seen[posKey] = true;
-            _ghost[posKey] = harness.getPosition(poolId, posKey);
-            _keys.push(posKey);
-            ghost_registrations++;
-        }
-        ghost_calls++;
+        _seen[posKey] = true;
+        _ghost[posKey] = harness.getPosition(poolId, posKey);
+        _keys.push(posKey);
+        ghost_registrations++;
     }
 
     function keysLength() external view returns (uint256) {

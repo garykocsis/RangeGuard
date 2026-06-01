@@ -74,7 +74,6 @@ contract AccrueFuzzTest is BaseRangeGuardTest {
         pos.active = active;
         pos.entryNotionalStable = notional;
         pos.earnedCoverageStable = 0;
-        pos.pendingPayout = 0;
         harness.seedPosition(POOL_ID, key, pos);
     }
 

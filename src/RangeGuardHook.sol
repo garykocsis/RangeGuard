@@ -5,6 +5,7 @@ import {BaseHook} from "v4-hooks-public/src/base/BaseHook.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
+import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
 import {ModifyLiquidityParams, SwapParams} from "v4-core/types/PoolOperation.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
@@ -24,6 +25,7 @@ import {FixedPoint96} from "v4-core/libraries/FixedPoint96.sol";
 contract RangeGuardHook is BaseHook {
     using PoolIdLibrary for PoolKey;
     using StateLibrary for IPoolManager;
+    using CurrencyLibrary for Currency;
 
     /*//////////////////////////////////////////////////////////////
                               TYPE DECLARATIONS
@@ -85,10 +87,10 @@ contract RangeGuardHook is BaseHook {
         uint32 depositTime; // block.timestamp at deposit
         uint32 lastAccrualTime; // Timestamp of last accrual update
         bool active; // true = registered, false = cleared
-        // Accrual / settlement (own slots)
+        // Accrual snapshot (own slots)
         uint256 entryNotionalStable; // entryAmt1 + entryAmt0 * P_entry (stable)
         uint256 earnedCoverageStable; // Cumulative coverage earned (stable)
-        uint256 pendingPayout; // Computed payout awaiting execution
+        uint128 liquidity; // full position liquidity; enforces MVP full-withdrawal only
     }
 
     /// @notice Transient staging record for a pool, written by `stagePoolConfig()` and
@@ -143,6 +145,9 @@ contract RangeGuardHook is BaseHook {
 
     /// @notice Day-count seconds-per-year: Actual/360.
     uint256 internal constant SECONDS_PER_YEAR_360 = 31_104_000;
+
+    /// @notice `IneligibleClaim` reason emitted when a withdrawal fails the `minHoldSeconds` gate.
+    bytes32 internal constant REASON_MIN_HOLD_NOT_MET = "MIN_HOLD_NOT_MET";
 
     /// @notice The Uniswap v4 PoolManager this hook is bound to.
     IPoolManager public immutable i_manager;
@@ -255,6 +260,85 @@ contract RangeGuardHook is BaseHook {
     /// @param timestamp  block.timestamp at the swap.
     event TickUpdated(PoolId indexed poolId, int24 newTick, uint256 timestamp);
 
+    /// @notice Emitted in `afterRemoveLiquidity` when a withdrawal pays full eligible IL coverage
+    ///         (the IL cap was the only binding constraint; payout > 0).
+    /// @param poolId          Pool the position belonged to.
+    /// @param positionKey     Position identifier within the pool.
+    /// @param owner           Position owner (the v4 `sender`; see MVP limitation).
+    /// @param tickLower       Position lower tick bound.
+    /// @param tickUpper       Position upper tick bound.
+    /// @param ilRaw           Raw impermanent loss measured at exit (stable units).
+    /// @param earnedCoverage  Earned coverage at settlement, post final accrual (stable units).
+    /// @param payout          Stable amount transferred to the LP.
+    /// @param limitingFactor  Binding cap (IL_CAP on this path).
+    event ClaimSettled(
+        PoolId indexed poolId,
+        bytes32 indexed positionKey,
+        address indexed owner,
+        int24 tickLower,
+        int24 tickUpper,
+        uint256 ilRaw,
+        uint256 earnedCoverage,
+        uint256 payout,
+        LimitingFactor limitingFactor
+    );
+
+    /// @notice Emitted in `afterRemoveLiquidity` when the payout is below full eligible IL coverage
+    ///         because the coverage or buffer cap bound it (including a capped-to-zero payout).
+    /// @param poolId          Pool the position belonged to.
+    /// @param positionKey     Position identifier within the pool.
+    /// @param owner           Position owner (the v4 `sender`; see MVP limitation).
+    /// @param tickLower       Position lower tick bound.
+    /// @param tickUpper       Position upper tick bound.
+    /// @param requested       Full eligible IL coverage before the coverage/buffer caps (IL_covered).
+    /// @param actual          Stable amount actually transferred to the LP (<= requested).
+    /// @param limitingFactor  Binding cap (COVERAGE_CAP, BUFFER_CAP, or IL_CAP when IL_covered rounds to 0).
+    event PartialPayout(
+        PoolId indexed poolId,
+        bytes32 indexed positionKey,
+        address indexed owner,
+        int24 tickLower,
+        int24 tickUpper,
+        uint256 requested,
+        uint256 actual,
+        LimitingFactor limitingFactor
+    );
+
+    /// @notice Emitted in `afterRemoveLiquidity` when there is no impermanent loss (IL_raw == 0).
+    /// @param poolId       Pool the position belonged to.
+    /// @param positionKey  Position identifier within the pool.
+    /// @param owner        Position owner (the v4 `sender`; see MVP limitation).
+    /// @param tickLower    Position lower tick bound.
+    /// @param tickUpper    Position upper tick bound.
+    /// @param vHodl        Value of the entry amounts at the exit price (stable units).
+    /// @param vActual      Value of the withdrawn amounts at the exit price (stable units).
+    event NoClaim(
+        PoolId indexed poolId,
+        bytes32 indexed positionKey,
+        address indexed owner,
+        int24 tickLower,
+        int24 tickUpper,
+        uint256 vHodl,
+        uint256 vActual
+    );
+
+    /// @notice Emitted in `afterRemoveLiquidity` when the withdrawal fails the `minHoldSeconds`
+    ///         eligibility gate; no accrual, IL, or payout is computed and the position is cleared.
+    /// @param poolId       Pool the position belonged to.
+    /// @param positionKey  Position identifier within the pool.
+    /// @param owner        Position owner (the v4 `sender`; see MVP limitation).
+    /// @param tickLower    Position lower tick bound.
+    /// @param tickUpper    Position upper tick bound.
+    /// @param reason       Ineligibility reason (`MIN_HOLD_NOT_MET`).
+    event IneligibleClaim(
+        PoolId indexed poolId,
+        bytes32 indexed positionKey,
+        address indexed owner,
+        int24 tickLower,
+        int24 tickUpper,
+        bytes32 reason
+    );
+
     /*//////////////////////////////////////////////////////////////
                                    ERRORS
     //////////////////////////////////////////////////////////////*/
@@ -306,6 +390,20 @@ contract RangeGuardHook is BaseHook {
 
     /// @notice Thrown when `secondsPerYear` is neither A/365F nor A/360.
     error UnsupportedDayCount();
+
+    /// @notice Thrown by `afterAddLiquidity` when topping up an already-registered position.
+    /// @dev    MVP supports a single add per position (one immutable entry snapshot); a top-up
+    ///         would desync `pos.liquidity` from the live v4 position and break the
+    ///         full-withdrawal gate in `beforeRemoveLiquidity`.
+    error PositionAlreadyRegistered();
+
+    /// @notice Thrown by `beforeRemoveLiquidity` when the position is not active (never registered
+    ///         or already settled).
+    error PositionNotActive();
+
+    /// @notice Thrown by `beforeRemoveLiquidity` when the removed liquidity is not the full
+    ///         position liquidity. MVP supports full withdrawal only.
+    error PartialWithdrawalNotSupported();
 
     /*//////////////////////////////////////////////////////////////
                                  MODIFIERS
@@ -450,11 +548,37 @@ contract RangeGuardHook is BaseHook {
         return this.beforeInitialize.selector;
     }
 
-    function _beforeRemoveLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, bytes calldata)
-        internal
-        override
-        returns (bytes4)
-    {
+    /// @notice Validation-only pre-withdrawal gate. No settlement happens here.
+    /// @dev    v4 constraint: `beforeRemoveLiquidity` can only allow or revert — it cannot pay a
+    ///         claim conditionally, and the withdrawn out-amounts do not exist yet (they are
+    ///         realized only in the `BalanceDelta` of `afterRemoveLiquidity`). All settlement
+    ///         (eligibility, final accrual, IL, payout, transfer) therefore lives in
+    ///         `_afterRemoveLiquidity`. This function only enforces the two structural rules:
+    ///         the position must be registered, and MVP allows full withdrawal only. It never
+    ///         calls `_accrue`/`_computeIL`/`_computePayout` and writes no state.
+    ///
+    ///         `liquidityDelta` is negative on a removal; its magnitude is the liquidity removed,
+    ///         which must equal the full stored position liquidity.
+    /// @param  sender  v4 caller, used (as the position owner, MVP) to derive the position key.
+    /// @param  key     Pool key selecting the pool.
+    /// @param  params  Liquidity params; supplies the tick range, salt, and removed liquidity.
+    /// @return The `beforeRemoveLiquidity` selector.
+    function _beforeRemoveLiquidity(
+        address sender,
+        PoolKey calldata key,
+        ModifyLiquidityParams calldata params,
+        bytes calldata
+    ) internal view override returns (bytes4) {
+        PoolId poolId = key.toId();
+        bytes32 positionKey = _positionKey(sender, params.tickLower, params.tickUpper, params.salt);
+        PositionState storage pos = positions[poolId][positionKey];
+
+        // Only a registered (never-settled) position may be withdrawn through the hook.
+        if (!pos.active) revert PositionNotActive();
+
+        // MVP full-withdrawal only: the removed liquidity must be the entire position.
+        if (uint256(-params.liquidityDelta) != pos.liquidity) revert PartialWithdrawalNotSupported();
+
         return this.beforeRemoveLiquidity.selector;
     }
 
@@ -507,12 +631,11 @@ contract RangeGuardHook is BaseHook {
         bytes32 positionKey = _positionKey(sender, params.tickLower, params.tickUpper, params.salt);
         PositionState storage pos = positions[poolId][positionKey];
 
-        // Skip re-registration: the entry snapshot is set once and never mutated. A top-up
-        // to an active position preserves the original snapshot (early-return before any
-        // state read of the pool, by design).
-        if (pos.active) {
-            return (this.afterAddLiquidity.selector, delta);
-        }
+        // Reject re-registration: the entry snapshot is set once and never mutated, and a top-up
+        // would desync `pos.liquidity` from the live v4 position liquidity — which the
+        // `beforeRemoveLiquidity` full-withdrawal gate compares against. MVP is one add per
+        // position; a top-up reverts so the LP cannot end up unable to withdraw.
+        if (pos.active) revert PositionAlreadyRegistered();
 
         // Current pool tick at deposit: drives the entry price and the in-range status.
         (, int24 currentTick,,) = i_manager.getSlot0(poolId);
@@ -546,6 +669,9 @@ contract RangeGuardHook is BaseHook {
         pos.depositTime = uint32(block.timestamp);
         pos.lastAccrualTime = uint32(block.timestamp);
         pos.active = true;
+        // Full position liquidity; the `beforeRemoveLiquidity` gate requires the LP to remove
+        // exactly this amount (MVP full-withdrawal only). `liquidityDelta` is positive on an add.
+        pos.liquidity = uint128(uint256(params.liquidityDelta));
 
         _emitPositionRegistered(poolId, positionKey, sender, pos, poolConfig[poolId]);
 
@@ -557,15 +683,96 @@ contract RangeGuardHook is BaseHook {
         return (this.afterAddLiquidity.selector, delta);
     }
 
+    /// @notice Settles IL coverage on a full withdrawal: eligibility, final accrual, IL, payout.
+    /// @dev    This is the v4-native settlement point — the withdrawn amounts are only known here
+    ///         (from `delta`). Ordering, in line with the mandated settlement flow
+    ///         (`final _accrue -> _computeIL -> _computePayout`):
+    ///           1. Re-derive the position; if inactive, no-op return (defensive — the `before`
+    ///              gate already required active).
+    ///           2. Extract withdrawn amounts from the caller `delta`. On a removal the caller
+    ///              delta is POSITIVE (the pool owes the LP); the FULL delta is used (NOT
+    ///              `delta - feesAccrued`) so `V_actual` includes earned fees, per the IL spec.
+    ///           3. `minHoldSeconds` HARD GATE: if not met, emit `IneligibleClaim`, clear the
+    ///              position, and return — no accrual/IL/payout (Pillar 3).
+    ///           4. Read `exitTick` via `getSlot0`. A liquidity removal never moves the pool
+    ///              price in v4, so this is the correct settlement tick.
+    ///           5. Final `_accrue()` (closes the coverage report), then `_computeIL()`.
+    ///           6. `IL_raw == 0` -> emit `NoClaim`, clear, return.
+    ///           7. `_computePayout()` (three caps), then settle: clear state + update buffer
+    ///              accounting BEFORE the transfer (strict CEI), pay the LP, emit
+    ///              `ClaimSettled` / `PartialPayout`.
+    ///
+    ///         Custody (MVP): the payout is a real ERC20 transfer of the hook's own token1
+    ///         balance (funded via `seedBuffer()`); the buffer ledger is notional, so a real
+    ///         transfer can revert if the hook is underfunded relative to the ledger. Accepted
+    ///         MVP limitation. Recipient is `sender` (the v4 owner=sender attribution).
+    /// @param  sender  v4 caller; the position owner (MVP) and the payout recipient.
+    /// @param  key     Pool key; selects the pool, its config/buffer, and the stable currency.
+    /// @param  params  Liquidity params; supplies the tick range and salt for the position key.
+    /// @param  delta   Caller balance delta from the removal (withdrawn principal + fees).
+    /// @return The `afterRemoveLiquidity` selector and an unchanged (zero) hook delta.
     function _afterRemoveLiquidity(
-        address,
-        PoolKey calldata,
-        ModifyLiquidityParams calldata,
+        address sender,
+        PoolKey calldata key,
+        ModifyLiquidityParams calldata params,
         BalanceDelta delta,
         BalanceDelta,
         bytes calldata
     ) internal override returns (bytes4, BalanceDelta) {
+        PoolId poolId = key.toId();
+        bytes32 positionKey = _positionKey(sender, params.tickLower, params.tickUpper, params.salt);
+        PositionState storage pos = positions[poolId][positionKey];
+
+        // Defensive no-op: settlement only applies to a registered position. The `before` gate
+        // already reverts on an inactive position, so this path is unreachable in normal flow.
+        if (!pos.active) return (this.afterRemoveLiquidity.selector, delta);
+
+        // Hard eligibility gate (Pillar 3): below min hold -> no coverage, just clean up. Checked
+        // before extracting withdrawn amounts so the ineligible path carries a minimal stack.
+        if (block.timestamp - pos.depositTime < poolConfig[poolId].minHoldSeconds) {
+            _emitIneligibleAndClear(poolId, positionKey, pos, sender);
+            return (this.afterRemoveLiquidity.selector, delta);
+        }
+
+        // Eligible: run the full settlement (extract amounts, final accrue, IL, payout) in a
+        // dedicated frame to stay under the stack limit without via-IR.
+        _settle(key, positionKey, sender, delta);
+
         return (this.afterRemoveLiquidity.selector, delta);
+    }
+
+    /// @notice Settlement body for an eligible full withdrawal: final accrual -> IL -> payout.
+    /// @dev    Split out of `_afterRemoveLiquidity` purely to bound the stack (no via-IR).
+    ///         Withdrawn amounts use the FULL caller delta (fees included) per the IL spec.
+    ///         The exit tick comes from `getSlot0` (a removal does not move the pool price).
+    /// @param  key          Pool key (selects the pool/config/buffer and the stable currency).
+    /// @param  positionKey  Position identifier within the pool.
+    /// @param  owner_       Payout recipient and event owner (the v4 `sender`, MVP).
+    /// @param  delta        Caller balance delta from the removal (withdrawn principal + fees).
+    function _settle(PoolKey calldata key, bytes32 positionKey, address owner_, BalanceDelta delta) private {
+        PoolId poolId = key.toId();
+        PositionState storage pos = positions[poolId][positionKey];
+
+        // Withdrawn amounts (fees included). Removal makes the caller delta positive; magnitudes.
+        uint128 outAmt0 = _absToUint128(delta.amount0());
+        uint128 outAmt1 = _absToUint128(delta.amount1());
+
+        // Settlement tick (removal does not move the price). Drives final accrual + IL.
+        (, int24 exitTick,,) = i_manager.getSlot0(poolId);
+
+        // Final accrual before settlement: emits the closing AccrualUpdated line for the report.
+        _accrue(poolId, positionKey, exitTick);
+
+        // IL on realized withdrawn amounts.
+        uint256 ilRaw = _computeIL(pos, outAmt0, outAmt1, exitTick);
+        if (ilRaw == 0) {
+            _emitNoClaimAndClear(poolId, positionKey, pos, owner_, outAmt0, outAmt1, exitTick);
+            return;
+        }
+
+        // Three-cap payout, then execute (clears state + buffer before the transfer).
+        (uint256 payout, LimitingFactor factor) = _computePayout(poolId, pos, ilRaw);
+        _settleClaim(poolId, key, positionKey, pos, owner_, ilRaw, payout, factor);
     }
 
     /// @notice Returns the per-swap dynamic LP fee; touches no position or accounting state.
@@ -898,6 +1105,109 @@ contract RangeGuardHook is BaseHook {
             cfg.coverageApr,
             cfg.secondsPerYear
         );
+    }
+
+    /// @notice Executes a settled claim: clears state and buffer accounting, pays the LP, emits.
+    /// @dev    Strict CEI — the position is deleted and the buffer ledger updated BEFORE the
+    ///         external token transfer (the locked flow requires "clear state before transfer";
+    ///         this clears buffer state too, which is strictly safer against a reentrant token).
+    ///         `payout <= bufferCap <= bufferBalanceStable` holds because `maxPayoutPctOfBuffer
+    ///         <= BPS_DENOM` is enforced at staging, so the buffer decrement cannot underflow.
+    ///         Event selection: full coverage (IL cap bound, payout > 0) -> `ClaimSettled`;
+    ///         otherwise -> `PartialPayout` (coverage/buffer cap bound, or payout rounded to 0),
+    ///         carrying `requested = IL_covered`. No transfer when `payout == 0`.
+    /// @param  poolId       Pool the position belongs to.
+    /// @param  key          Pool key (supplies the stable currency for the payout transfer).
+    /// @param  positionKey  Position identifier within the pool.
+    /// @param  pos          Storage pointer to the settling position (read, then deleted).
+    /// @param  owner_       Payout recipient and event owner (the v4 `sender`, MVP).
+    /// @param  ilRaw        Raw impermanent loss (stable units).
+    /// @param  payout       Capped payout from `_computePayout` (stable units).
+    /// @param  factor       Binding cap reported by `_computePayout`.
+    function _settleClaim(
+        PoolId poolId,
+        PoolKey calldata key,
+        bytes32 positionKey,
+        PositionState storage pos,
+        address owner_,
+        uint256 ilRaw,
+        uint256 payout,
+        LimitingFactor factor
+    ) private {
+        // Capture event fields before clearing the slot.
+        int24 tickLower = pos.tickLower;
+        int24 tickUpper = pos.tickUpper;
+        uint256 earned = pos.earnedCoverageStable;
+        uint256 requested = FullMath.mulDiv(ilRaw, poolConfig[poolId].maxPayoutPctOfIl, BPS_DENOM);
+
+        // Effects (strict CEI): clear the position and update buffer accounting before paying.
+        delete positions[poolId][positionKey];
+        if (payout > 0) {
+            PoolState storage state = poolState[poolId];
+            state.bufferBalanceStable -= payout;
+            state.totalPaidOutStable += payout;
+        }
+
+        // Interaction: pay the LP in the stable numeraire (token1). Skipped on a zero payout.
+        if (payout > 0) {
+            key.currency1.transfer(owner_, payout);
+        }
+
+        // Full eligible coverage was paid iff the IL cap was the only binding constraint.
+        if (payout > 0 && factor == LimitingFactor.IL_CAP) {
+            emit ClaimSettled(poolId, positionKey, owner_, tickLower, tickUpper, ilRaw, earned, payout, factor);
+        } else {
+            emit PartialPayout(poolId, positionKey, owner_, tickLower, tickUpper, requested, payout, factor);
+        }
+    }
+
+    /// @notice Emits `NoClaim` (IL_raw == 0) and clears the position.
+    /// @dev    Recomputes `V_HODL` / `V_actual` at the exit price for the report. This mirrors
+    ///         `_computeIL`'s valuation on its zero-IL path only (cold path); the IL decision
+    ///         itself is owned by `_computeIL`.
+    /// @param  poolId       Pool the position belongs to.
+    /// @param  positionKey  Position identifier within the pool.
+    /// @param  pos          Storage pointer to the settling position (read, then deleted).
+    /// @param  owner_       Event owner (the v4 `sender`, MVP).
+    /// @param  outAmt0      Withdrawn token0 amount (fees included).
+    /// @param  outAmt1      Withdrawn token1 amount (fees included).
+    /// @param  exitTick     Settlement tick used to price both valuations.
+    function _emitNoClaimAndClear(
+        PoolId poolId,
+        bytes32 positionKey,
+        PositionState storage pos,
+        address owner_,
+        uint128 outAmt0,
+        uint128 outAmt1,
+        int24 exitTick
+    ) private {
+        uint256 pExit = _priceFromTick(exitTick);
+        uint256 vHodl = uint256(pos.entryAmt1) + FullMath.mulDiv(uint256(pos.entryAmt0), pExit, PRICE_PRECISION);
+        uint256 vActual = uint256(outAmt1) + FullMath.mulDiv(uint256(outAmt0), pExit, PRICE_PRECISION);
+        int24 tickLower = pos.tickLower;
+        int24 tickUpper = pos.tickUpper;
+
+        delete positions[poolId][positionKey];
+
+        emit NoClaim(poolId, positionKey, owner_, tickLower, tickUpper, vHodl, vActual);
+    }
+
+    /// @notice Emits `IneligibleClaim` (minHoldSeconds not met) and clears the position.
+    /// @dev    No accrual, IL, or payout is computed on this path (Pillar 3 hard gate). The
+    ///         withdrawal itself has already completed; only the coverage claim is denied.
+    /// @param  poolId       Pool the position belongs to.
+    /// @param  positionKey  Position identifier within the pool.
+    /// @param  pos          Storage pointer to the settling position (read, then deleted).
+    /// @param  owner_       Event owner (the v4 `sender`, MVP).
+    function _emitIneligibleAndClear(PoolId poolId, bytes32 positionKey, PositionState storage pos, address owner_)
+        private
+    {
+        int24 tickLower = pos.tickLower;
+        int24 tickUpper = pos.tickUpper;
+
+        delete positions[poolId][positionKey];
+
+        emit IneligibleClaim(poolId, positionKey, owner_, tickLower, tickUpper, REASON_MIN_HOLD_NOT_MET);
     }
 
     /// @notice Returns the magnitude of a signed amount as a `uint128`.

@@ -72,7 +72,6 @@ contract PositionLifecycleInvariant is BaseRangeGuardTest {
         for (uint256 i = 0; i < n; i++) {
             RangeGuardHook.PositionState memory live = harness.getPosition(handler.poolId(), handler.keyAt(i));
             assertEq(live.earnedCoverageStable, 0, "registration must not accrue coverage");
-            assertEq(live.pendingPayout, 0, "registration must not create a pending payout");
         }
     }
 }

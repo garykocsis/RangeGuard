@@ -36,7 +36,9 @@ RangeGuard is a Uniswap v4 hook that provides native, on-chain insurance against
 - Accrual model is LAZY --- coverage only computed on explicit touches
   - afterAddLiquidity: dt = 0, initializes lastAccrualTime baseline
   - checkpoint() primary accrual driver between deposit and withdrawal
-  - beforeRemoveLiquidity: final accrual update before settlement
+  - afterRemoveLiquidity: final accrual update before settlement
+    computation (v4-native: withdrawn amounts and final accrual both
+    resolved inside afterRemoveLiquidity)
 - afterSwap does NOT trigger accrual --- it is impossible to iterate all LP positions on-chain (unbounded set, O(N) gas per swap)
 - getEarnedCoverage() view function always simulates accrual to block.timestamp --- returns correct live value without requiring a checkpoint first
 - Report granularity is driven by checkpoint frequency
@@ -58,9 +60,15 @@ RangeGuard is a Uniswap v4 hook that provides native, on-chain insurance against
   - Emits IneligibleClaim with reason "MIN_HOLD_NOT_MET"
   - Skips all accrual, IL, computation, and payout logic entirely
 - Settlement is triggered on full withdrawal only (no partial withdrawals in MVP)
-- Settlement flow:
-  - beforeRemoveLiquidity: eligibility check -> final \_accrue() -> computeIL() -> computePayout() -> storePendingPayout
-  - afterRemoveLiquidity: execute payout -> update buffer -> cleanup position state -> emit events
+- Settlement flow (v4-native — withdrawn amounts exist only AFTER removal):
+  - beforeRemoveLiquidity: validation only — enforce active position, enforce MVP
+    full-withdrawal only (revert on partial). No IL or payout computation — withdrawn
+    amounts not known yet.
+  - afterRemoveLiquidity: extract actual withdrawn amounts from BalanceDelta,
+    minHoldSeconds eligibility check, if ineligible emit IneligibleClaim and cleanup
+    state, final \_accrue(), \_computeIL() using outAmt0/outAmt1, \_computePayout() using
+    three-cap logic, execute payout transfer, update buffer accounting, cleanup
+    PositionState, emit settlement events.
 - IL formula (stable numeraire):
   - P_exit = spot price from current tick (decimal adjusted, USDC per ETH)
   - V_HODL = entryAmt1 + entryAmt0 \* P_exit
@@ -303,8 +311,9 @@ struct PositionState {
     uint32  lastAccrualTime;        // Timestamp of last accrual update
     uint256 earnedCoverageStable;   // Cumulative coverage earned (USDC)
 
-    // Settlement -- set in beforeRemoveLiquidity, cleared in afterRemoveLiquidity
-    uint256 pendingPayout;          // Computed payout awaiting execution
+    // Withdrawal gate -- full position liquidity captured at registration; the
+    // beforeRemoveLiquidity gate compares removed liquidity against it (MVP full-withdrawal only)
+    uint128 liquidity;              // full position liquidity
 
     // Existence flag
     bool active;                    // true = registered, false = cleared
@@ -342,16 +351,16 @@ This handles all three deposit cases naturally:
 
 ## 6. Hook Callbacks & Responsibilities
 
-| Callback                                 | Responsibility                                                                                                                                                                                                                                                                                                                                                                              |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| stagePoolConfig (Phase 1, onlyOwner)     | Validate all PoolConfig bounds, authorizedInitializer, expectedSqrtPriceX96. Store PendingPoolSetup. Emit PoolConfigStaged. Re-stageable until pool initialized.                                                                                                                                                                                                                            |
-| setReactiveContract (Phase 3, onlyOwner) | Require pool initialized. \_reactiveSet guard: reverts ReactiveAlreadySet on second call. Rejects address(0). Sets reactiveContract[poolId], \_reactiveSet[poolId] = true. Emits ReactiveContractSet.                                                                                                                                                                                       |
-| beforeInitialize                         | Validate key.fee == DYNAMIC_FEE_FLAG. Require pending setup exists (PoolNotStaged). Validate sender == authorizedInitializer (UnauthorizedInitializer). Validate sqrtPriceX96 == expectedSqrtPriceX96 (UnexpectedSqrtPrice). Commit poolConfig from pending setup. Delete \_pendingSetup. Set \_poolInitialized = true. Emit PoolConfigInitialized. Note: reactiveContract is NOT set here. |
-| afterAddLiquidity                        | Derive entryAmt0, entryAmt1 from liquidity delta. Compute entryNotionalStable. Register PositionState (active=true). Call \_accrue() --- dt=0, initializes lastAccrualTime. Emit PositionRegistered.                                                                                                                                                                                        |
-| beforeSwap                               | Return dynamic fee = baseLpFeeBps + bufferBps. No position state touched.                                                                                                                                                                                                                                                                                                                   |
-| afterSwap                                | Compute buffer contribution from swap fee. Update bufferBalanceStable. Emit BufferFunded. Emit TickUpdated (for Reactive Network). NO position accrual --- cannot iterate positions.                                                                                                                                                                                                        |
-| beforeRemoveLiquidity                    | Check minHoldSeconds -> if not met: emit IneligibleClaim, return. Call \_accrue() final update. Call \_computeIL(). Call \_computePayout(). Store pendingPayout. Emit AccrualUpdated.                                                                                                                                                                                                       |
-| afterRemoveLiquidity                     | Execute pendingPayout transfer to LP. Update bufferBalanceStable and totalPaidOutStable. Clear PositionState (active=false, pendingPayout=0). Emit ClaimSettled / PartialPayout / NoClaim.                                                                                                                                                                                                  |
+| Callback                                 | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| stagePoolConfig (Phase 1, onlyOwner)     | Validate all PoolConfig bounds, authorizedInitializer, expectedSqrtPriceX96. Store PendingPoolSetup. Emit PoolConfigStaged. Re-stageable until pool initialized.                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| setReactiveContract (Phase 3, onlyOwner) | Require pool initialized. \_reactiveSet guard: reverts ReactiveAlreadySet on second call. Rejects address(0). Sets reactiveContract[poolId], \_reactiveSet[poolId] = true. Emits ReactiveContractSet.                                                                                                                                                                                                                                                                                                                                                                             |
+| beforeInitialize                         | Validate key.fee == DYNAMIC_FEE_FLAG. Require pending setup exists (PoolNotStaged). Validate sender == authorizedInitializer (UnauthorizedInitializer). Validate sqrtPriceX96 == expectedSqrtPriceX96 (UnexpectedSqrtPrice). Commit poolConfig from pending setup. Delete \_pendingSetup. Set \_poolInitialized = true. Emit PoolConfigInitialized. Note: reactiveContract is NOT set here.                                                                                                                                                                                       |
+| afterAddLiquidity                        | Derive entryAmt0, entryAmt1 from liquidity delta. Compute entryNotionalStable. Register PositionState (active=true). Call \_accrue() --- dt=0, initializes lastAccrualTime. Emit PositionRegistered.                                                                                                                                                                                                                                                                                                                                                                              |
+| beforeSwap                               | Return dynamic fee = baseLpFeeBps + bufferBps. No position state touched.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| afterSwap                                | Compute buffer contribution from swap fee. Update bufferBalanceStable. Emit BufferFunded. Emit TickUpdated (for Reactive Network). NO position accrual --- cannot iterate positions.                                                                                                                                                                                                                                                                                                                                                                                              |
+| beforeRemoveLiquidity                    | Validation only. Derive positionKey. Require position is active (revert PositionNotActive). Enforce MVP full-withdrawal only: require uint128(-params.liquidityDelta) == pos.liquidity (revert PartialWithdrawalNotSupported). No minHoldSeconds check. No accrual, IL, or payout computation. Return selector.AccrualUpdated.                                                                                                                                                                                                                                                    |
+| afterRemoveLiquidity                     | All settlement logic. Extract outAmt0/outAmt1 from BalanceDelta (fees included per IL spec). Check minHoldSeconds HARD GATE: if not met, emit IneligibleClaim, cleanup PositionState, return. Get exitTick from getSlot0. Call \_accrue() — final accrual. Call \_computeIL(pos, outAmt0, outAmt1, exitTick). Call \_computePayout(). Strict CEI: clear PositionState (active=false) and update buffer BEFORE transfer. Transfer USDC payout to LP. Emit ClaimSettled (IL_CAP, payout>0), PartialPayout (COVERAGE_CAP/BUFFER_CAP or payout==0 with IL>0), or NoClaim (IL_raw==0). |
 
 ## 7. Core Internal Functions
 
@@ -552,7 +561,7 @@ LimitingFactor is included in:
 | BufferSeeded          | seedBuffer()                               | poolId, amount, newBalance                                                        |
 | ClaimSettled          | afterRemoveLiquidity (payout > 0)          | owner, range, IL_raw, earnedCoverage, payout, limitingFactor                      |
 | NoClaim               | afterRemoveLiquidity (IL = 0)              | owner, range, V_HODL, V_actual                                                    |
-| IneligibleClaim       | beforeRemoveLiquidity (minHold not met)    | owner, range, reason                                                              |
+| IneligibleClaim       | afterRemoveLiquidity (minHold not met)     | owner, range, reason                                                              |
 | PartialPayout         | afterRemoveLiquidity (buffer insufficient) | owner, range, requested, actual                                                   |
 | Checkpointed          | checkpoint()                               | poolId, positionKey, timestamp                                                    |
 

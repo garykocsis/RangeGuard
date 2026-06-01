@@ -178,7 +178,7 @@ contract AfterAddLiquidityTest is BaseRangeGuardTest {
         RangeGuardHook.PositionState memory pos = harness.getPosition(poolId, _expectedKey(TICK_LOWER, TICK_UPPER));
         assertEq(pos.earnedCoverageStable, 0, "no coverage at dt=0");
         assertEq(pos.lastAccrualTime, uint32(START_TIME), "lastAccrualTime seeded to now");
-        assertEq(pos.pendingPayout, 0, "no pending payout");
+        assertEq(pos.liquidity, 1e18, "liquidity snapshots params.liquidityDelta");
     }
 
     function test_AfterAddLiquidity_WhenValid_ReturnsSelectorAndDelta() public {
@@ -251,12 +251,14 @@ contract AfterAddLiquidityTest is BaseRangeGuardTest {
     }
 
     /*//////////////////////////////////////////////////////////////
-                       RE-ADD GUARD (SNAPSHOT IMMUTABLE)
+                       RE-ADD GUARD (REVERTS — ONE ADD PER POSITION)
     //////////////////////////////////////////////////////////////*/
 
-    /// Why: a top-up to an already-active position must preserve the original immutable
-    /// entry snapshot (no re-registration).
-    function test_AfterAddLiquidity_WhenReAddedToActivePosition_PreservesSnapshot() public {
+    /// Why: MVP supports a single add per position. A top-up to an already-active position must
+    /// revert (not silently skip) — silently skipping would leave `pos.liquidity` desynced from
+    /// the live v4 position liquidity and permanently block the full-withdrawal gate. The
+    /// original snapshot must be untouched after the revert.
+    function test_AfterAddLiquidity_WhenReAddedToActivePosition_Reverts() public {
         (PoolKey memory key, PoolId poolId) = _initPool();
         bytes32 posKey = _expectedKey(TICK_LOWER, TICK_UPPER);
 
@@ -274,13 +276,14 @@ contract AfterAddLiquidityTest is BaseRangeGuardTest {
         seeded.earnedCoverageStable = 555;
         harness.seedPosition(poolId, posKey, seeded);
 
-        // Re-add with completely different amounts.
-        (bytes4 selector,) = harness.exposed_afterAddLiquidity(
+        // Re-add with completely different amounts must revert.
+        vm.expectRevert(RangeGuardHook.PositionAlreadyRegistered.selector);
+        harness.exposed_afterAddLiquidity(
             LP, key, _params(TICK_LOWER, TICK_UPPER), _addDelta(9e18, 9_000e6), toBalanceDelta(0, 0), ""
         );
 
+        // Snapshot untouched after the revert.
         RangeGuardHook.PositionState memory pos = harness.getPosition(poolId, posKey);
-        assertEq(selector, harness.afterAddLiquidity.selector, "still returns selector");
         assertEq(pos.entryAmt0, 111, "entryAmt0 unchanged");
         assertEq(pos.entryAmt1, 222, "entryAmt1 unchanged");
         assertEq(pos.entryTick, 42, "entryTick unchanged");
