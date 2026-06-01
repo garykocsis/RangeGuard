@@ -47,16 +47,22 @@ Completed (Phase 2 — hook callbacks):
   ClaimSettled/PartialPayout/NoClaim; PositionState dropped pendingPayout, added uint128
   liquidity; re-add reverts PositionAlreadyRegistered; 181 tests passing)
 
+Completed (Phase 2 — continued):
+
+- checkpoint() (permissionless, accrual-only Reactive entry point: \_poolInitialized -> active ->
+  minCheckpointInterval (CheckpointTooSoon) gates, \_getCurrentTick + \_accrue, Checkpointed)
+- seedBuffer() (admin-only real token1 custody via IERC20Minimal.transferFrom; credits
+  bufferBalanceStable only — totalSkimmedStable untouched; BufferSeeded; resolves R2 real-custody
+  carry-in; 210 tests passing)
+
 Current implementation target:
 
-- checkpoint()
+- Reactive Network contract
 
 Upcoming implementation order:
 
-1. checkpoint() ← current
-2. seedBuffer() (real buffer custody)
-3. Reactive Network contract
-4. Frontend dashboard
+1. Reactive Network contract ← current
+2. Frontend dashboard
 
 ---
 
@@ -289,7 +295,9 @@ Do not introduce architectural changes without updating:
    - afterRemoveLiquidity() ✅ (v4-native settlement: minHold gate -> final \_accrue -> \_computeIL
      -> \_computePayout -> strict-CEI payout; ClaimSettled/PartialPayout/NoClaim)
 
-5. checkpoint() ← current (permissionless accrual driver; Reactive entry point), then seedBuffer()
+5. checkpoint() ✅ (permissionless accrual driver; Reactive entry point) + seedBuffer() ✅
+   (admin-only real token1 custody) — both complete and tested.
+   Next: Reactive Network contract (onlyReactive + emitOutOfRange/emitBackInRange).
 
 6. Callback-specific tests
 
@@ -324,26 +332,29 @@ At the start of every session, Claude must:
 
 # Current Session State
 
-Last completed: beforeRemoveLiquidity() + afterRemoveLiquidity() — v4-native settlement
-(181 tests passing). See docs/session-8-remove-liquidity-complete.md.
-Current target: checkpoint() — permissionless single-position accrual driver / Reactive entry
-point: require(active), enforce `block.timestamp - lastAccrualTime >= minCheckpointInterval`
-(TOO_SOON), read current tick via getSlot0, \_accrue(poolId, positionKey, currentTick), emit
-Checkpointed.
-Next up: seedBuffer() (real buffer custody), then the Reactive Network contract.
-Notes: the settlement split is forced by v4 — beforeRemoveLiquidity (now `view`) is VALIDATION
-ONLY (PositionNotActive if inactive; PartialWithdrawalNotSupported if `uint256(-liquidityDelta)
-!= pos.liquidity`). ALL settlement runs in afterRemoveLiquidity because withdrawn out-amounts
-exist only in the removal BalanceDelta: minHold hard gate (-> IneligibleClaim + clear), final
-\_accrue (exit tick via getSlot0; a removal never moves the price), \_computeIL on the FULL delta
-(fees INCLUDED, unlike the entry path which nets fees out), \_computePayout (three caps), then a
-strict-CEI payout — clear position + decrement bufferBalanceStable + increment totalPaidOutStable
-BEFORE the real `key.currency1.transfer(sender, payout)`. Events: ClaimSettled (IL cap bound,
-payout>0) / PartialPayout (coverage|buffer cap bound, incl. IL>0 but payout==0 -> actual=0) /
-NoClaim (IL_raw==0). PositionState dropped pendingPayout, added uint128 liquidity (captured at
-registration); re-add reverts PositionAlreadyRegistered (one add per position). payout <=
-bufferCap <= bufferBalanceStable (no underflow), but the ledger buffer is NOTIONAL — real
-solvency needs seedBuffer() backing (accepted MVP limitation).
-Carry-ins: seedBuffer() provides the real token1 custody the payout transfer depends on (tests
-mint token1 to the hook to stand in). Payout recipient = v4 sender (owner=sender MVP). Doc-fix pass complete: invariant-mapping.md, state-machine.md, testing-strategy.md, and context.md all updated to reflect v4-native
-settlement. spec.md §6/§7 targeted changes applied.
+Last completed: checkpoint() + seedBuffer() (210 tests passing). See
+docs/session-9-checkpoint-seedBuffer-complete.md.
+Current target: Reactive Network contract — onlyReactive(poolId) guard (on \_reactiveSet[poolId]),
+emitOutOfRange / emitBackInRange, subscribe to TickUpdated, and drive checkpoint() on the periodic
+heartbeat + range-crossing triggers. Reactive contracts must never mutate accounting state.
+Next up: doc-fix pass (reconcile invariant-mapping.md / state-machine.md / spec.md §6–§8 with the
+v4-native settlement model + the \_getCurrentTick helper), then the frontend dashboard.
+Notes: checkpoint(poolId, positionKey) is permissionless and accrual-ONLY — no IL/payout/transfer.
+Gates: \_poolInitialized (PoolNotInitialized) -> pos.active (PositionNotActive) ->
+`block.timestamp - lastAccrualTime < minCheckpointInterval` (CheckpointTooSoon). Reads the live tick
+via the NEW private \_getCurrentTick(poolId) (the spec's \_getCurrentTick was never implemented; the
+three existing callbacks keep their inline getSlot0 reads), calls \_accrue, emits Checkpointed.
+Permissionless is safe because \_accrue is monotonic / range-gated / ceiling-capped and rate-limited.
+minCheckpointInterval has no staging lower bound; 0 is allowed and harmless (dt==0 -> zero delta).
+seedBuffer(key, amount) is admin-only (msg.sender == config.admin) REAL token1 custody. Order:
+\_poolInitialized (PoolNotInitialized) -> CallerNotAdmin -> ZeroAmount, then pull via
+IERC20Minimal(Currency.unwrap(key.currency1)).transferFrom (CurrencyLibrary has NO transferFrom —
+verified) with a checked bool (interaction before effects), then credit bufferBalanceStable ONLY
+(totalSkimmedStable is fee accounting, untouched), emit BufferSeeded. Admin must approve(hook,amount)
+first. Native token1 can't be seeded (no transferFrom) — out of MVP scope. This resolves the
+session-8 R2 carry-in: payouts now draw from REAL seeded custody (the new SeedBufferInvariant and
+integration test use real seeding, not a mint-to-hook stand-in). New errors: CheckpointTooSoon,
+CallerNotAdmin, ZeroAmount. New events: Checkpointed, BufferSeeded.
+Carry-ins: payout recipient = v4 sender (owner=sender MVP). Doc drift still deferred: spec.md §6–§8,
+invariant-mapping.md, and state-machine.md still narrate the old settlement flow / reference
+pendingPayout / PendingSettlement and the unimplemented \_getCurrentTick — fold into the doc-fix pass.

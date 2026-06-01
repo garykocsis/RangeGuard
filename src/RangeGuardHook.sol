@@ -9,6 +9,7 @@ import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
 import {ModifyLiquidityParams, SwapParams} from "v4-core/types/PoolOperation.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {IERC20Minimal} from "v4-core/interfaces/external/IERC20Minimal.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {LPFeeLibrary} from "v4-core/libraries/LPFeeLibrary.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
@@ -339,6 +340,25 @@ contract RangeGuardHook is BaseHook {
         bytes32 reason
     );
 
+    /// @notice Emitted on every successful `checkpoint()` after the position's accrual is advanced.
+    /// @dev    The accrual delta itself is carried by the `AccrualUpdated` event `_accrue()` emits;
+    ///         this is the lightweight marker the Reactive Network / coverage report keys off to
+    ///         tie a checkpoint touch to its trigger.
+    /// @param poolId       Pool the position belongs to.
+    /// @param positionKey  Position identifier within the pool.
+    /// @param timestamp    block.timestamp at which the checkpoint ran.
+    event Checkpointed(PoolId indexed poolId, bytes32 indexed positionKey, uint256 timestamp);
+
+    /// @notice Emitted on `seedBuffer()` when the admin funds the pool's IL-coverage buffer.
+    /// @dev    Unlike `BufferFunded` (notional fee skim in `afterSwap`), this credit is backed by a
+    ///         real token1 pull from the admin, giving the hook the custody payouts transfer from.
+    ///         It increments `bufferBalanceStable` only; `totalSkimmedStable` (fee accounting) is
+    ///         deliberately untouched.
+    /// @param poolId            Pool whose buffer was seeded.
+    /// @param amount            token1 amount pulled from the admin (stable units).
+    /// @param newBufferBalance  Buffer balance after the seed (stable units).
+    event BufferSeeded(PoolId indexed poolId, uint256 amount, uint256 newBufferBalance);
+
     /*//////////////////////////////////////////////////////////////
                                    ERRORS
     //////////////////////////////////////////////////////////////*/
@@ -404,6 +424,15 @@ contract RangeGuardHook is BaseHook {
     /// @notice Thrown by `beforeRemoveLiquidity` when the removed liquidity is not the full
     ///         position liquidity. MVP supports full withdrawal only.
     error PartialWithdrawalNotSupported();
+
+    /// @notice Thrown by `checkpoint()` when called again before `minCheckpointInterval` elapses.
+    error CheckpointTooSoon();
+
+    /// @notice Thrown by `seedBuffer()` when the caller is not the pool's configured admin.
+    error CallerNotAdmin();
+
+    /// @notice Thrown by `seedBuffer()` when the seed amount is zero.
+    error ZeroAmount();
 
     /*//////////////////////////////////////////////////////////////
                                  MODIFIERS
@@ -488,6 +517,70 @@ contract RangeGuardHook is BaseHook {
         _reactiveSet[poolId] = true;
 
         emit ReactiveContractSet(poolId, reactive);
+    }
+
+    /// @notice Permissionless single-position accrual driver; the Reactive Network's primary entry point.
+    /// @dev    Accrual ONLY — advances one position's `earnedCoverageStable` to `block.timestamp`
+    ///         via `_accrue()`; never computes IL, never pays out, never moves tokens. Safe to leave
+    ///         permissionless: `_accrue` is monotonic, range-gated, and ceiling-capped, and the
+    ///         `minCheckpointInterval` rate-limit bounds call frequency, so a caller can only perform
+    ///         the accrual the protocol already wants. Reads the live tick via `getSlot0` (storage
+    ///         read; no PoolManager unlock or reentrancy surface).
+    ///
+    ///         `minCheckpointInterval` has no lower bound at staging; if it is 0, same-block
+    ///         re-checkpoints are permitted but harmless (`_accrue` sees `dt == 0` -> zero delta,
+    ///         `lastAccrualTime` unchanged).
+    /// @param  poolId       Pool the position belongs to.
+    /// @param  positionKey  Position identifier within the pool.
+    function checkpoint(PoolId poolId, bytes32 positionKey) external {
+        // Defensive: a position can only be active on an initialized pool, but guard explicitly.
+        if (!_poolInitialized[poolId]) revert PoolNotInitialized();
+
+        PositionState storage pos = positions[poolId][positionKey];
+        if (!pos.active) revert PositionNotActive();
+
+        // Rate limit: enforce the per-pool minimum interval since the last accrual.
+        if (block.timestamp - pos.lastAccrualTime < poolConfig[poolId].minCheckpointInterval) {
+            revert CheckpointTooSoon();
+        }
+
+        _accrue(poolId, positionKey, _getCurrentTick(poolId));
+
+        emit Checkpointed(poolId, positionKey, block.timestamp);
+    }
+
+    /// @notice Fund a pool's IL-coverage buffer with real token1 custody (admin only).
+    /// @dev    Pairs with the notional fee skim in `afterSwap`: that inflates the buffer LEDGER
+    ///         without taking tokens, whereas this pulls real token1 from the admin so the hook
+    ///         actually holds the funds that settlement payouts (`_settleClaim`) transfer out.
+    ///         Credits `bufferBalanceStable` only — `totalSkimmedStable` is fee accounting and is
+    ///         intentionally left untouched (so `getBufferHealth` reflects seeds in the balance,
+    ///         not in skimmed fees). CurrencyLibrary has no `transferFrom`, so the pull goes through
+    ///         `IERC20Minimal`; the admin must `approve(this, amount)` on token1 beforehand. The
+    ///         pull (interaction) runs before the ledger credit (effects) so tokens that never
+    ///         arrive are never credited. Native token1 cannot be seeded (no `transferFrom`); MVP
+    ///         token1 is an ERC20 stable (USDC), so this is out of scope.
+    /// @param  key     Pool key; `key.currency1` is the stable token pulled and `key.toId()` selects the pool.
+    /// @param  amount  token1 amount to pull from the admin into the buffer (must be > 0).
+    function seedBuffer(PoolKey calldata key, uint256 amount) external {
+        PoolId poolId = key.toId();
+
+        // Checks. `_poolInitialized` first: an uninitialized pool has `admin == address(0)`, so the
+        // admin check alone would mask the real cause behind a misleading CallerNotAdmin.
+        if (!_poolInitialized[poolId]) revert PoolNotInitialized();
+        if (msg.sender != poolConfig[poolId].admin) revert CallerNotAdmin();
+        if (amount == 0) revert ZeroAmount();
+
+        // Interaction: pull the real token1 backing from the admin. Reverts on a false return
+        // (insufficient allowance/balance or a non-standard failure).
+        bool ok = IERC20Minimal(Currency.unwrap(key.currency1)).transferFrom(msg.sender, address(this), amount);
+        if (!ok) revert();
+
+        // Effects: credit the buffer balance only (NOT totalSkimmedStable).
+        uint256 newBufferBalance = poolState[poolId].bufferBalanceStable + amount;
+        poolState[poolId].bufferBalanceStable = newBufferBalance;
+
+        emit BufferSeeded(poolId, amount, newBufferBalance);
     }
 
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
@@ -1208,6 +1301,15 @@ contract RangeGuardHook is BaseHook {
         delete positions[poolId][positionKey];
 
         emit IneligibleClaim(poolId, positionKey, owner_, tickLower, tickUpper, REASON_MIN_HOLD_NOT_MET);
+    }
+
+    /// @notice Reads the pool's current tick from the PoolManager.
+    /// @dev    Thin `getSlot0` wrapper (storage read via `StateLibrary`; no unlock, no reentrancy
+    ///         surface). Shared entry point for tick-derived range status — used by `checkpoint()`.
+    /// @param  poolId  Pool to read.
+    /// @return tick    The pool's current tick.
+    function _getCurrentTick(PoolId poolId) private view returns (int24 tick) {
+        (, tick,,) = i_manager.getSlot0(poolId);
     }
 
     /// @notice Returns the magnitude of a signed amount as a `uint128`.

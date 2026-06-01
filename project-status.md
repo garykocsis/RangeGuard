@@ -1,6 +1,6 @@
 # RangeGuard Project Status
 
-Last Updated: 2026-05-31 (Session 8 — beforeRemoveLiquidity / afterRemoveLiquidity)
+Last Updated: 2026-05-31 (Session 9 — checkpoint / seedBuffer)
 
 ## How to use this file
 
@@ -18,42 +18,50 @@ Last Updated: 2026-05-31 (Session 8 — beforeRemoveLiquidity / afterRemoveLiqui
 
 ## Now
 
-- **Active target:** `checkpoint()` — permissionless single-position accrual driver and primary
-  Reactive Network entry point. `require(pos.active)`, `block.timestamp - lastAccrualTime >=
-  cfg.minCheckpointInterval` (else `TOO_SOON`), read current tick via `getSlot0`, `_accrue(poolId,
-  positionKey, currentTick)`, emit `Checkpointed`. Pairs next with `seedBuffer()` (real custody).
-- **Just completed:** `beforeRemoveLiquidity()` + `afterRemoveLiquidity()`. The settlement split is
-  v4-native: `beforeRemoveLiquidity` (now `view`) is VALIDATION ONLY — `PositionNotActive` if
-  inactive, `PartialWithdrawalNotSupported` if `uint256(-liquidityDelta) != pos.liquidity` (MVP
-  full-withdrawal). ALL settlement runs in `afterRemoveLiquidity`, because withdrawn out-amounts
-  exist only in the removal `BalanceDelta`: minHold hard gate (→ `IneligibleClaim` + clear), then
-  final `_accrue()` (exit tick via `getSlot0`) → `_computeIL()` on the FULL delta (fees included)
-  → `_computePayout()` (three caps) → strict-CEI payout (clear position + update buffer BEFORE the
-  real token1 transfer) → `ClaimSettled` / `PartialPayout` / `NoClaim`.
+- **Active target:** Reactive Network contract — `onlyReactive(poolId)` guard (on
+  `_reactiveSet[poolId]`), `emitOutOfRange` / `emitBackInRange`, subscribe to `TickUpdated`, and
+  drive `checkpoint()` on the periodic heartbeat + range-crossing triggers. Reactive contracts must
+  never mutate accounting state.
+- **Just completed:** `checkpoint()` + `seedBuffer()`. `checkpoint(poolId, positionKey)` is
+  permissionless and accrual-ONLY (no IL/payout/transfer): guards `_poolInitialized` →
+  `PositionNotActive` → `block.timestamp - lastAccrualTime < minCheckpointInterval`
+  (`CheckpointTooSoon`), reads the live tick via the new private `_getCurrentTick(poolId)`, calls
+  `_accrue`, emits `Checkpointed`. `seedBuffer(key, amount)` is admin-only (`config.admin`) REAL
+  token1 custody: guards `_poolInitialized` → `CallerNotAdmin` → `ZeroAmount`, pulls via
+  `IERC20Minimal.transferFrom` (CurrencyLibrary has no `transferFrom`), credits
+  `bufferBalanceStable` ONLY (not `totalSkimmedStable`), emits `BufferSeeded`.
 - **Locked decisions resolved this session:**
-  - **PositionState change** — dropped `pendingPayout`, added `uint128 liquidity` (full position
-    liquidity, captured at registration; the withdrawal gate compares against it).
-  - **R1: re-add reverts `PositionAlreadyRegistered`** — one add per position (a silent skip would
-    desync `pos.liquidity` and brick withdrawal).
-  - **R3: `IL_raw > 0` but `payout == 0` → `PartialPayout(requested=IL_covered, actual=0)`**;
-    `NoClaim` strictly for `IL_raw == 0`.
-  - **Strict CEI** — buffer/`totalPaidOut` updates moved BEFORE the transfer (superset of the
-    locked "clear state before transfer"; safer vs reentrant tokens).
-  - **R2: notional buffer vs real custody** — accepted/documented; payout is a real token1 transfer
-    of the hook's own balance; ledger solvency ≠ real solvency until `seedBuffer()`.
+  - **R1: `_getCurrentTick`** — the spec referenced it but it was never implemented (callbacks
+    inline `getSlot0`); added as a private helper for `checkpoint()`; existing inline reads kept.
+  - **R2: token pull** — `IERC20Minimal.transferFrom` with a checked bool (revert on false); admin
+    must `approve(hook, amount)` first.
+  - **R3: `minCheckpointInterval == 0`** allowed (no staging bound); same-block re-checkpoints are
+    harmless (`dt == 0` → zero delta). Staging validation NOT touched.
+  - **R4: seed credits `bufferBalanceStable` only** — `totalSkimmedStable` is fee accounting;
+    `getBufferHealth` reflecting seeds in the balance is desired.
+  - **R5: native token1** can't be seeded (no `transferFrom`); out of MVP scope, documented only.
+- **R2 carry-in (from session 8) RESOLVED:** `seedBuffer()` provides the real token1 custody the
+  payout transfer depends on. The new `SeedBufferInvariant` and the new integration test use real
+  seeded custody instead of minting token1 directly to the hook.
 - **Carry-ins:**
-  - **`seedBuffer()` still to implement** — provides the real token1 custody the payout transfer
-    depends on (integration test mints token1 to the hook to stand in for it).
   - Position owner attribution: payout recipient is the v4 `sender` (owner=sender MVP).
-  - **Doc drift (R5, deferred):** `invariant-mapping.md` + `state-machine.md` still reference
-    `pendingPayout` / `PendingSettlement`; spec.md §6/§7 still narrate the old flow. Fix in a
-    separate doc pass.
-- **Tests:** 181 passing, 0 failing.
+  - **Doc drift (deferred):** `invariant-mapping.md` + `state-machine.md` still reference
+    `pendingPayout` / `PendingSettlement`; spec.md §6–§8 narrate the old settlement flow and the
+    unimplemented `_getCurrentTick`. Fix in the standalone doc pass alongside the Reactive work.
+- **Tests:** 210 passing, 0 failing.
 
 ---
 
 ## Completed
 
+- **checkpoint() / seedBuffer()** — Phase-2 externals. `checkpoint()` is the permissionless,
+  accrual-only Reactive entry point (`_poolInitialized` → active → `minCheckpointInterval`
+  (`CheckpointTooSoon`) → `_accrue` via new private `_getCurrentTick` → `Checkpointed`).
+  `seedBuffer()` is admin-only REAL token1 custody (`IERC20Minimal.transferFrom`; credits
+  `bufferBalanceStable` only), resolving the session-8 R2 carry-in. Full test suite: 16 unit + 4
+  fuzz + 8 invariant (CheckpointInvariant + SeedBufferInvariant + handlers, 50k calls × 0 reverts) +
+  1 integration (real seedBuffer custody → checkpoint → settle). (+29 tests → 210 total)
+  -> docs/session-9-checkpoint-seedBuffer-complete.md
 - **beforeRemoveLiquidity() / afterRemoveLiquidity()** — withdrawal/settlement callbacks.
   `beforeRemoveLiquidity` (`view`) validates only: active position + full-withdrawal gate
   (`removed == pos.liquidity`). `afterRemoveLiquidity` runs all settlement from the realized
@@ -62,9 +70,9 @@ Last Updated: 2026-05-31 (Session 8 — beforeRemoveLiquidity / afterRemoveLiqui
   three-cap, strict-CEI payout (clear + buffer update before a real token1 transfer),
   `ClaimSettled` / `PartialPayout` / `NoClaim`. PositionState dropped `pendingPayout`, added
   `uint128 liquidity`; re-add now reverts `PositionAlreadyRegistered`. Full test suite: 14 unit
-  + 2 fuzz + 3 invariant (SettlementExecution + handler) + 1 integration (real add→swap→warp→
-  remove→ClaimSettled, custody/buffer/paidOut reconciled). (+20 tests → 181 total)
-  -> docs/session-8-remove-liquidity-complete.md
+  - 2 fuzz + 3 invariant (SettlementExecution + handler) + 1 integration (real add→swap→warp→
+    remove→ClaimSettled, custody/buffer/paidOut reconciled). (+20 tests → 181 total)
+    -> docs/session-8-remove-liquidity-complete.md
 - **beforeSwap() / afterSwap()** — swap-path callbacks. `beforeSwap` (`view`) returns the derived
   dynamic fee `(baseLpFeeBps + bufferBps) | OVERRIDE_FEE_FLAG` + `ZERO_DELTA`, reads `poolConfig`
   only. `afterSwap` books the notional buffer credit (`|delta.amount1()| * bufferBps / FEE_DENOM`,
@@ -127,20 +135,52 @@ Pool setup + afterAddLiquidity wired; remaining callbacks are selector-returning
 - [x] beforeRemoveLiquidity() (validation only: active + full-withdrawal gate; +6 unit tests)
 - [x] afterRemoveLiquidity() (v4-native settlement: minHold gate -> final \_accrue -> \_computeIL ->
       \_computePayout -> strict-CEI payout; ClaimSettled/PartialPayout/NoClaim; +14 tests)
+- [x] checkpoint() (permissionless accrual-only Reactive entry point; \_poolInitialized/active/
+      minCheckpointInterval gates, \_getCurrentTick + \_accrue, Checkpointed; +19 tests)
+- [x] seedBuffer() (admin-only real token1 custody via IERC20Minimal.transferFrom; credits
+      bufferBalanceStable only; BufferSeeded; resolves R2 real-custody carry-in; +10 tests)
 
 ### Phase 3: Integration Testing
 
-- [ ] Full LP lifecycle
-- [ ] Coverage accrual lifecycle
-- [ ] Buffer funding lifecycle
-- [ ] Settlement lifecycle
+- [x] Full LP lifecycle (CheckpointAndSeed: add→swap→seed→checkpoint→remove→settle, reconciled)
+- [ ] Coverage accrual lifecycle (only single in-range checkpoint + final accrual covered;
+      TODO: out-of-range pause / back-in-range resume / multi-checkpoint history — the in→out→in
+      arc, partly gated on the Reactive contract's PositionOutOfRange/BackInRange emits)
+- [x] Buffer funding lifecycle (Swap: notional skim from real swaps; CheckpointAndSeed: real seed custody)
+- [x] Settlement lifecycle (RemoveLiquidity + CheckpointAndSeed: final accrue→IL→payout→transfer→cleanup)
+
+Note: coverage is distributed across per-session integration files rather
+than a single dedicated Phase 3 suite. A comprehensive single-test lifecycle
+covering all callbacks end-to-end will come with the demo script.
+
+### Phase 3B: Protocol Completion
+
+- [ ] Reactive contract
+
+      - onlyReactive(poolId) guard (on _reactiveSet[poolId])
+      - emitOutOfRange() / emitBackInRange() (access-controlled)
+      - TickUpdated subscription for range-crossing detection
+      - checkpoint() heartbeat driver (periodic + range-crossing triggers)
+      - Reactive contracts must never mutate accounting state
+
+- [ ] Frontend dashboard (coverage report rendered from on-chain events)
+- [ ] Demo script (RangeGuardDemo.s.sol with vm.warp, full 45-day lifecycle)
 
 ### Phase 4: Protocol Invariants (cross-cutting)
 
-- [ ] Accounting invariants (partial: coverage accounting done with \_accrue())
-- [ ] Lifecycle invariants
-- [ ] Settlement invariants
-- [ ] Authorization invariants
+- [x] Accounting invariants (coverage + buffer + checkpoint: CoverageAccounting/Checkpoint/
+      BufferFunding/SeedBuffer — earned never decreases/exceeds ceiling, inactive never accrues,
+      clock monotonic, buffer never negative, snapshots immutable, maxPayoutPctOfBuffer<=BPS_DENOM)
+- [ ] Lifecycle invariants (transitions proven in separate per-action campaigns
+      (PositionLifecycle/Checkpoint/SettlementExecution); TODO: one combined stateful
+      add→checkpoint→remove campaign on shared keys)
+- [x] Settlement invariants (SettlementInvariant + SettlementExecutionInvariant: IL_raw never
+      negative/bounded, payout <= every cap, buffer conserved (buffer+paidOut==seed), real custody==
+      ledger, LimitingFactor matches binding cap)
+- [ ] Authorization invariants (blocked on Reactive phase: onlyReactive/emitOutOfRange/emitBackInRange
+      not built yet; access checks are unit-tested (owner/admin/initializer) + \_reactiveSet monotonic
+      in PoolSetupInvariant, but no dedicated authorization-invariant suite and no "reactive never
+      mutates accounting" coverage until the Reactive contract exists)
 
 ### Phase 5: Deployment Readiness on Anvil
 
