@@ -86,7 +86,6 @@ contract AccrueTest is BaseRangeGuardTest {
         pos.active = true;
         pos.entryNotionalStable = NOTIONAL;
         pos.earnedCoverageStable = 0;
-        pos.pendingPayout = 0;
     }
 
     function _seed(RangeGuardHook.PositionState memory pos) internal {

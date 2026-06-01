@@ -20,20 +20,28 @@ Completed:
 - Pool setup: stagePoolConfig + \_beforeInitialize + setReactiveContract
 - afterAddLiquidity()
 - beforeSwap() / afterSwap()
+- beforeRemoveLiquidity() / afterRemoveLiquidity()
 
 Next implementation target:
 
-- beforeRemoveLiquidity() / afterRemoveLiquidity()
+- checkpoint()
 
 Planned next steps:
 
-- beforeRemoveLiquidity() / afterRemoveLiquidity() ← current
-- checkpoint()
-- Reactive contract
+- checkpoint() ← current
+- seedBuffer() (real buffer custody; pairs with the notional skim)
+- Reactive contract (onlyReactive + emitOutOfRange/emitBackInRange)
 - Frontend dashboard
 
 Recent architecture update:
 
+- Settlement is v4-native: beforeRemoveLiquidity is VALIDATION ONLY (active +
+  full-withdrawal gate); ALL settlement (final \_accrue -> \_computeIL -> \_computePayout
+  -> transfer -> cleanup) runs in afterRemoveLiquidity, because withdrawn out-amounts
+  exist only in the removal BalanceDelta. PositionState dropped pendingPayout, added
+  uint128 liquidity. Re-add now reverts PositionAlreadyRegistered (one add per position).
+  Payout is a real token1 transfer of the hook's own balance; ledger buffer is notional
+  (real backing via seedBuffer()).
 - Two-denominator system: fee fields (baseLpFeeBps, bufferBps) use
   FEE_DENOM = 1_000_000 (v4 pips); payout caps use BPS_DENOM = 10_000
 - beforeSwap must return fee | OVERRIDE_FEE_FLAG or v4 ignores it
@@ -80,7 +88,8 @@ Pillar 1 - Accrual Gating:
 - Accrual is LAZY - only computed on explicit touches
   - afterAddLiquidity (dt = 0, initializes lastAccrualTime)
   - checkpoint() (primary accrual driver)
-  - beforeRemoveLiquidity (final accrual before settlement)
+  - afterRemoveLiquidity (final accrual before settlement — v4-native:
+    withdrawn amounts and final accrual both resolved in afterRemoveLiquidity)
 - afterSwap does NOT accrue (cannot iterate positions)
 - getEarnedCoverage() view simulates accrual to block.timestamp so it always returns correct live value without a checkpoint
 
@@ -100,10 +109,12 @@ Pillar 3 - Claim Settlement:
   - emits IneligibleClaim, skips all accrual/IL/payout logic
 - Settlement flow:
   ```
-  beforeRemoveLiquidity: eligibility check -> final _accrue() ->
-         _computeIL() -> _computePayout() -> store pendingPayout
-  afterRemoveLiquidity: execute payout -> update buffer ->
-                        cleanup state -> emit events
+  beforeRemoveLiquidity: validation only — enforce active position,
+  enforce full-withdrawal only (revert on partial). No eligibility
+  check, no accrual, no IL or payout computation.
+  afterRemoveLiquidity: extract outAmt0/outAmt1 from BalanceDelta,
+  minHoldSeconds gate, final _accrue(), _computeIL(), _computePayout(),
+  strict CEI cleanup + transfer, emit settlement events.
   ```
 - IL formula (stable numeraire):
   ```
@@ -254,8 +265,9 @@ struct PositionState {
     uint32  lastAccrualTime         // timestamp of last accrual update
     uint256 earnedCoverageStable    // cumulative coverage earned (USDC)
 
-    // Settlement
-    uint256 pendingPayout           // computed payout awaiting execution
+    // Withdrawal gate (set once at registration)
+    uint128 liquidity               // full position liquidity; beforeRemoveLiquidity
+                                    // gate enforces removed == liquidity (full withdrawal only)
 
     // Existence
     bool active                     // true = registered
@@ -311,19 +323,25 @@ afterSwap:
 
 beforeRemoveLiquidity:
 
-- Check minHoldSeconds -> if not met: emit IneligibleClaim, return
-- Call \_accrue() - final accrual update
-- Call \_computeIL() - spot price IL calculation
-- Call \_computePayout() - apply three caps, determine LimitingFactor
-- Store pendingPayout
-- Emit AccrualUpdated
+- Validation only
+- Require position is active (revert PositionNotActive)
+- Enforce full-withdrawal only: require removed liquidity == pos.liquidity
+  (revert PartialWithdrawalNotSupported)
+- No minHoldSeconds check, no accrual, no IL or payout computation
+- Return selector
 
 afterRemoveLiquidity:
 
-- Execute pendingPayout -> transfer USDC to LP
-- Update bufferBalanceStable, totalPaidOutStable
-- Clear PositionState (active = false, pendingPayout = 0)
-- Emit ClaimSettled / PartialPayout / NoClaim
+- Extract outAmt0/outAmt1 from BalanceDelta (fees included)
+- Check minHoldSeconds HARD GATE: if not met, emit IneligibleClaim,
+  cleanup PositionState, return
+- Get exitTick from getSlot0
+- Call \_accrue() — final accrual
+- Call \_computeIL(pos, outAmt0, outAmt1, exitTick)
+- Call \_computePayout() — three-cap logic
+- Strict CEI: clear PositionState and update buffer BEFORE transfer
+- Transfer USDC payout to LP
+- Emit ClaimSettled / PartialPayout / NoClaim / IneligibleClaim
 
 ## 10. Events (Final)
 

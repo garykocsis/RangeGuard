@@ -61,6 +61,28 @@ contract RangeGuardHookHarness is RangeGuardHook {
         return _afterAddLiquidity(sender, key, params, delta, feesAccrued, hookData);
     }
 
+    /// @notice Exposes the internal `_beforeRemoveLiquidity` validation gate for unit testing.
+    function exposed_beforeRemoveLiquidity(
+        address sender,
+        PoolKey calldata key,
+        ModifyLiquidityParams calldata params,
+        bytes calldata hookData
+    ) external view returns (bytes4) {
+        return _beforeRemoveLiquidity(sender, key, params, hookData);
+    }
+
+    /// @notice Exposes the internal `_afterRemoveLiquidity` settlement callback for unit testing.
+    function exposed_afterRemoveLiquidity(
+        address sender,
+        PoolKey calldata key,
+        ModifyLiquidityParams calldata params,
+        BalanceDelta delta,
+        BalanceDelta feesAccrued,
+        bytes calldata hookData
+    ) external returns (bytes4, BalanceDelta) {
+        return _afterRemoveLiquidity(sender, key, params, delta, feesAccrued, hookData);
+    }
+
     /// @notice Exposes the internal `_beforeSwap` callback for direct unit testing.
     function exposed_beforeSwap(
         address sender,

@@ -1,9 +1,7 @@
 # Purpose
 
-This document defines the valid lifecycle states and transitions for:
-
-1. **Pool setup** — the three-phase initialization sequence before any LP can interact
-2. **LP positions** — the full lifecycle from deposit through settlement
+This document defines the valid lifecycle states and transitions
+for RangeGuard LP positions and pool setup.
 
 It serves as the canonical reference for:
 
@@ -63,32 +61,26 @@ Properties:
 - `_pendingSetup[poolId].exists == false` (deleted on commit)
 - `reactiveContract[poolId] == address(0)` — not yet registered
 - `_reactiveSet[poolId] == false`
-- Pool exists in PoolManager at exact `expectedSqrtPriceX96`
-- LP position registration technically possible but not recommended
-  until ReactiveRegistered + Seeded
 
 ### ReactiveRegistered
 
-Owner deployed the reactive contract (using the now-known hook address)
-and called `setReactiveContract()`. Reactive automation is now active.
+Owner deployed the reactive contract and called `setReactiveContract()`.
 
 Properties:
 
 - `_reactiveSet[poolId] == true`
 - `reactiveContract[poolId] != address(0)`
 - `onlyReactive(poolId)` access control is now functional
-- Range transition detection and periodic checkpoints are operational
 - `_reactiveSet` is permanently true — no further changes possible
 
 ### Seeded
 
-Admin called `seedBuffer()`. Buffer is funded and IL payouts can be executed.
+Admin called `seedBuffer()`. Buffer is funded and IL payouts can execute.
 
 Properties:
 
 - `poolState[poolId].bufferBalanceStable > 0`
 - Pool is fully operational
-- LP deposits, checkpoints, and claim settlements all function correctly
 
 ## Pool Setup Transitions
 
@@ -96,28 +88,26 @@ Properties:
 Deploy hook
   → Unregistered
 
-owner.stagePoolConfig(key, config, authorizedInitializer, expectedSqrtPriceX96)
+owner → hook.stagePoolConfig(key, config, authorizedInitializer, expectedSqrtPriceX96)
   Unregistered → Staged
 
-owner.stagePoolConfig() again (re-stage before init)
+owner → hook.stagePoolConfig() again (before init)
   Staged → Staged  (overwrites _pendingSetup)
 
 authorizedInitializer → PoolManager.initialize(key, expectedSqrtPriceX96)
-  (hook _beforeInitialize validates and commits)
   Staged → Initialized
 
-owner.setReactiveContract(key, reactive)
+owner → hook.setReactiveContract(key, reactive)
   Initialized → ReactiveRegistered
 
-admin.seedBuffer(key, amount)
+admin → hook.seedBuffer(key, amount)
   ReactiveRegistered → Seeded
-  (also valid from Initialized, but not recommended before reactive is set)
 ```
 
 ## Pool Setup Invalid Transitions
 
 ```
-Unregistered → Initialized     (PoolNotStaged — must stage first)
+Unregistered → Initialized     (PoolNotStaged)
 Staged → Initialized            with wrong caller (UnauthorizedInitializer)
 Staged → Initialized            with wrong price  (UnexpectedSqrtPrice)
 Any state → Staged              after initialized  (PoolAlreadyInitialized)
@@ -125,25 +115,12 @@ Any state → ReactiveRegistered  more than once     (ReactiveAlreadySet)
 Unregistered → ReactiveRegistered                  (PoolNotInitialized)
 ```
 
-## Pool Setup State Ownership
-
-| Phase             | Actor                              | Function                   |
-| ----------------- | ---------------------------------- | -------------------------- |
-| Stage             | `owner` (contract-level)           | `stagePoolConfig()`        |
-| Initialize        | `authorizedInitializer` (per-pool) | `PoolManager.initialize()` |
-| Register reactive | `owner` (contract-level)           | `setReactiveContract()`    |
-| Seed buffer       | `config.admin` (per-pool)          | `seedBuffer()`             |
-
-Note: `owner` gates protocol-level operations (who can create pools).
-`config.admin` gates pool-level operations (how a pool is funded).
-These are intentionally separate roles.
-
 ## Minimum Pool State for LP Interaction
 
-- Position registration (`afterAddLiquidity`): requires **Initialized** or later
-- Reactive automation (checkpoints, range events): requires **ReactiveRegistered** or later
-- IL payout execution: requires **Seeded** (buffer must have balance)
-- **Recommended minimum before any LP interaction: Seeded**
+- Position registration: requires **Initialized** or later
+- Reactive automation: requires **ReactiveRegistered** or later
+- IL payout execution: requires **Seeded** (real token balance)
+- **Recommended minimum: Seeded**
 
 ---
 
@@ -153,12 +130,12 @@ These are intentionally separate roles.
 
 ### Registered
 
-Position exists and is active.
+Position exists and is active. No accrual has occurred yet (dt=0 at registration).
 
 Properties:
 
 - `active == true`
-- `pendingPayout == 0`
+- `liquidity` set to full position liquidity at registration
 - position registered in storage
 
 ### InRangeAccruing
@@ -179,44 +156,27 @@ Properties:
 - accrual paused
 - `checkpoint()` emits zero accrual delta
 
-### PendingSettlement
-
-Position withdrawal initiated.
-
-Properties:
-
-- `pendingPayout` computed
-- final accrual completed
-- payout awaiting execution
-- no further accrual permitted
-
-### Settled
-
-Payout execution completed.
-
-Properties:
-
-- `ClaimSettled` / `NoClaim` emitted
-- buffer updated
-- payout finalized
-
 ### Cleared
 
-Position storage reset.
+Position storage reset after settlement completes atomically in
+`afterRemoveLiquidity`. Settlement (final accrual, IL, payout, transfer)
+and cleanup occur in a single callback — there is no persistent intermediate
+settlement state.
 
 Properties:
 
 - `active == false`
-- `pendingPayout == 0`
 - storage slot available for reuse
 - position no longer valid
 
-# Valid State Transitions
+## Valid State Transitions
 
 Note: all position transitions require pool to be in **Initialized** or later state.
+MVP enforces one add per position — `afterAddLiquidity` reverts `PositionAlreadyRegistered`
+if the position key is already active.
 
 ```
-afterAddLiquidity:
+afterAddLiquidity (first add only):
   → Registered
 
 checkpoint() while in range:
@@ -231,39 +191,32 @@ checkpoint() while out of range:
 Reactive range re-entry:
   OutOfRangePaused → InRangeAccruing
 
-beforeRemoveLiquidity:
-  any active state → PendingSettlement
+beforeRemoveLiquidity (validation only — no state transition):
+  Validates: active position + full-withdrawal only
+  No position state is written. If validation fails, reverts entirely.
 
-afterRemoveLiquidity:
-  PendingSettlement → Settled
-
-cleanup:
-  Settled → Cleared
+afterRemoveLiquidity (atomic settlement):
+  Any active state → Cleared
+  Settlement (final _accrue, _computeIL, _computePayout, strict-CEI
+  cleanup + transfer) is atomic within this single callback.
+  No persistent intermediate state exists between before and after.
 ```
 
-# Invalid Transitions
+## Invalid Transitions
 
 ```
-Position:
-  Cleared           → any active state
-  PendingSettlement → InRangeAccruing
-  Settled           → PendingSettlement
-  inactive position → checkpoint()
-  inactive position → payout execution
-  OutOfRange        → payout execution    (settlement is valid but with zero delta
-                                           from out-of-range period; full settlement
-                                           still executes)
-Pool:
-  (see Pool Setup Invalid Transitions above)
-  position registration before pool Initialized state
+Cleared           → any active state      (no re-activation)
+inactive position → checkpoint()          (PositionNotActive / silent skip)
+inactive position → payout execution      (afterRemoveLiquidity no-ops)
+afterAddLiquidity on active position      (PositionAlreadyRegistered)
+partial removal on active position        (PartialWithdrawalNotSupported in beforeRemoveLiquidity)
 ```
 
-# State Ownership Rules
+## State Ownership Rules
 
 Hook contract owns:
 
 - accounting state
-- payout state
 - accrual state
 - pool setup state (`_pendingSetup`, `_poolInitialized`, `_reactiveSet`)
 
@@ -288,7 +241,7 @@ Authorized initializer owns:
 
 **Reactive contract must never directly mutate accounting state.**
 
-# Derived State Rules
+## Derived State Rules
 
 Pool setup state is derived from:
 
@@ -315,9 +268,11 @@ Claim eligibility is derived from:
 block.timestamp - depositTime >= minHoldSeconds
 ```
 
-# Frontend Interpretation Rules
+(evaluated in `afterRemoveLiquidity` — not in `beforeRemoveLiquidity`)
 
-## Pool setup states
+## Frontend Interpretation Rules
+
+### Pool setup states
 
 | State              | Display                          |
 | ------------------ | -------------------------------- |
@@ -327,11 +282,11 @@ block.timestamp - depositTime >= minHoldSeconds
 | ReactiveRegistered | "Pool active — buffer pending"   |
 | Seeded             | "Pool fully operational"         |
 
-## Position states
+### Position states
 
-| State             | Display            |
-| ----------------- | ------------------ |
-| InRangeAccruing   | "Earning coverage" |
-| OutOfRangePaused  | "Coverage paused"  |
-| PendingSettlement | "Claim processing" |
-| Cleared           | "Position closed"  |
+| State            | Display                                  |
+| ---------------- | ---------------------------------------- |
+| Registered       | "Position active — not yet checkpointed" |
+| InRangeAccruing  | "Earning coverage"                       |
+| OutOfRangePaused | "Coverage paused"                        |
+| Cleared          | "Position closed"                        |

@@ -11,6 +11,7 @@ Testing is designed to validate:
 - invariant preservation
 - range-gated accrual semantics
 - pool setup sequencing and access control
+- settlement atomicity and event semantics
 - Reactive Network coordination
 - adversarial execution paths
 
@@ -58,22 +59,6 @@ All tests should deploy RangeGuardHook using:
 Tests must avoid ad hoc hook deployment logic unless
 explicitly testing deployment failure scenarios.
 
-This ensures:
-
-- hook permission consistency
-- deterministic deployment behavior
-- CREATE2 consistency
-- production-aligned configuration
-- consistent hook address derivation
-
-The deployment script should serve as the canonical
-deployment pathway for:
-
-- unit tests
-- integration tests
-- invariant tests
-- local development
-
 All test suites should inherit from:
 
 - BaseRangeGuardTest.t.sol
@@ -85,11 +70,7 @@ The shared test harness should provide:
 - reusable helper functionality
 - consistent test initialization
 
-Additional setup logic should extend:
-
-- BaseRangeGuardTest
-  via:
-- super.setUp()
+Additional setup logic should extend BaseRangeGuardTest via super.setUp().
 
 # Test Categories
 
@@ -103,6 +84,8 @@ Validate isolated function correctness:
 - `_accrue()`
 - `_computeIL()`
 - `_computePayout()`
+- `_beforeRemoveLiquidity()` (validation only)
+- `_afterRemoveLiquidity()` (all settlement logic)
 - PoolConfig validation
 - checkpoint interval enforcement
 - access control
@@ -112,11 +95,9 @@ Validate isolated function correctness:
 Validate complete protocol flows:
 
 - full pool setup sequence (stagePoolConfig → initialize → setReactiveContract → seedBuffer)
-- liquidity lifecycle
-- swap interactions
-- checkpoint flows
-- settlement flows
-- range transitions
+- full LP lifecycle (add → checkpoint → warp → remove → ClaimSettled)
+- swap interactions and buffer funding
+- range transition flows
 - Reactive callback coordination
 
 ## Invariant Tests
@@ -125,9 +106,9 @@ Validate protocol laws remain true under arbitrary execution ordering.
 
 Focus areas:
 
-- pool setup invariants (staged → initialized → reactive registered)
+- pool setup invariants
 - accounting preservation
-- payout caps
+- settlement invariants (buffer conservation, payout caps, real custody)
 - lifecycle correctness
 - authorization boundaries
 - accrual gating
@@ -148,141 +129,66 @@ Validate protocol correctness under randomized:
 
 # Pool Setup Function Testing Goals
 
-Pool setup involves three ordered phases. Each phase has its own
-access control, validation, and state transition requirements.
-Tests for these functions live in `RangeGuardHook.t.sol`.
-
 ## stagePoolConfig() (Phase 1)
 
 Tests should validate:
 
-**Access control:**
-
-- reverts when caller is not owner (`NotOwner`)
-
-**Already-initialized guard:**
-
-- reverts when pool is already initialized (`PoolAlreadyInitialized`)
-
-**Zero-value rejections:**
-
-- reverts when `config.admin == address(0)` (`ZeroAdmin`)
-- reverts when `authorizedInitializer == address(0)` (`ZeroInitializer`)
-- reverts when `expectedSqrtPriceX96 == 0` (`ZeroSqrtPrice`)
-
-**PoolConfig bound validation:**
-
-- reverts on non-dynamic-fee key (`NotDynamicFee`)
-- reverts when `baseLpFeeBps > MAX_BASE_FEE_BPS` (`InvalidFeeConfig`)
-- reverts when `bufferBps > MAX_BUFFER_BPS` (`InvalidFeeConfig`)
-- reverts when `coverageApr == 0` (`InvalidApr`)
-- reverts when `coverageApr > MAX_COVERAGE_APR` (`InvalidApr`)
-- reverts when `maxPayoutPctOfIl > MAX_PAYOUT_PCT` (`InvalidPayoutCaps`)
-- reverts when `maxPayoutPctOfBuffer > BPS_DENOM` (`InvalidPayoutCaps`)
-  ← critical: this bound protects the buffer-payout settlement invariant
-- reverts when `secondsPerYear` is neither `SECONDS_PER_YEAR_365F`
-  nor `SECONDS_PER_YEAR_360` (`UnsupportedDayCount`)
-
-**Success path:**
-
-- valid config stores `_pendingSetup[poolId]` correctly
-- `PoolConfigStaged` event emitted with correct parameters
-- `authorizedInitializer` and `expectedSqrtPriceX96` stored correctly
-
-**Re-stage behavior:**
-
-- owner may overwrite `_pendingSetup[poolId]` before pool is initialized
-- re-staged values replace previous values completely
-- re-staging after initialization reverts (`PoolAlreadyInitialized`)
-
-**Fuzz:**
-
-- valid configs across all bound ranges round-trip into `_pendingSetup`
-- any out-of-bound parameter value always reverts regardless of other inputs
+- Reverts when caller is not owner (`NotOwner`)
+- Reverts when pool is already initialized (`PoolAlreadyInitialized`)
+- Reverts when `config.admin == address(0)` (`ZeroAdmin`)
+- Reverts when `authorizedInitializer == address(0)` (`ZeroInitializer`)
+- Reverts when `expectedSqrtPriceX96 == 0` (`ZeroSqrtPrice`)
+- Reverts on non-dynamic-fee key (`NotDynamicFee`)
+- Reverts on each invalid bound including `maxPayoutPctOfBuffer > BPS_DENOM`
+- Success: `_staged[poolId]` populated, `PoolConfigStaged` emitted
+- Re-stage before init: owner overwrites successfully
+- Fuzz: valid configs round-trip; out-of-bound values always revert
 
 ## setReactiveContract() (Phase 3)
 
 Tests should validate:
 
-**Access control:**
-
-- reverts when caller is not owner (`NotOwner`)
-
-**Ordering guard:**
-
-- reverts when pool is not yet initialized (`PoolNotInitialized`)
-
-**One-time guard:**
-
-- reverts on second call regardless of caller (`ReactiveAlreadySet`)
-- `_reactiveSet[poolId]` is true and permanent after first successful call
-
-**Zero-value rejection:**
-
-- reverts when `reactive == address(0)` (`ZeroReactive`)
-
-**Success path:**
-
-- `reactiveContract[poolId]` set to provided address
-- `_reactiveSet[poolId]` set to true
-- `ReactiveContractSet` event emitted
-- `onlyReactive(poolId)` access control functions correctly after registration
+- Reverts when caller is not owner (`NotOwner`)
+- Reverts when pool not initialized (`PoolNotInitialized`)
+- Reverts on second call (`ReactiveAlreadySet`)
+- Reverts when `reactive == address(0)` (`ZeroReactive`)
+- Success: `reactiveContract[id]` set, `_reactiveSet[id]` true, event emitted
 
 ---
 
 # \_accrue() Testing Goals
 
-The \_accrue() engine must validate:
-
 - accrual only while in range
 - zero dt produces zero accrual
 - earnedCoverageStable never decreases
 - accrual ceiling enforcement
-- correct yearFraction calculation
-- correct APR scaling
+- correct yearFraction and APR scaling
 - proper lastAccrualTime updates
 - inactive positions do not accrue
 - out-of-range positions accrue zero
-- checkpoint ordering correctness
 
 ---
 
 # \_computeIL() Testing Goals
 
-The \_computeIL() engine must validate:
-
 - correct spot-price IL calculation
 - correct decimal-adjusted price handling
-- V_HODL calculation correctness
-- V_actual calculation correctness
+- V_HODL and V_actual calculation correctness
 - IL_raw returns zero when V_actual >= V_HODL
 - IL_raw never becomes negative
-- deposit edge cases:
-  - Case A: 100% token0
-  - Case B: mixed deposit
-  - Case C: 100% token1
-- correct handling of extreme tick values
+- all three deposit cases (A: 100% token0, B: mixed, C: 100% token1)
+- extreme tick values handled correctly
 
 ---
 
 # \_computePayout() Testing Goals
 
-The \_computePayout() engine must validate:
-
-- correct IL cap calculation
-- correct buffer cap calculation
+- correct IL cap, buffer cap, coverage cap calculations
 - correct payout minimum selection
-- payout never exceeds earnedCoverageStable
-- payout never exceeds bufferBalanceStable
-- payout never exceeds configured payout caps
+- payout never exceeds earnedCoverageStable, bufferBalanceStable, or payout caps
 - correct LimitingFactor selection
-- IL_raw == 0 returns:
-  - payout = 0
-  - LimitingFactor.NONE
-- edge cases involving:
-  - empty buffer
-  - zero earned coverage
-  - maximum payout caps
+- IL_raw == 0 → payout = 0, LimitingFactor.NONE
+- edge cases: empty buffer, zero earned coverage, maximum payout caps
 
 ---
 
@@ -290,123 +196,93 @@ The \_computePayout() engine must validate:
 
 ## beforeInitialize (Phase 2 commit)
 
-Tests should validate:
-
-**PoolManager guard:**
-
-- reverts when called by non-PoolManager address (`onlyPoolManager`)
-
-**Staged config requirement:**
-
-- reverts when no pending setup exists for poolId (`PoolNotStaged`)
-
-**Caller authorization:**
-
-- reverts when `sender != _pendingSetup[poolId].authorizedInitializer`
-  (`UnauthorizedInitializer`)
-- succeeds when `sender == authorizedInitializer`
-
-**Price integrity:**
-
-- reverts when `sqrtPriceX96 != _pendingSetup[poolId].expectedSqrtPriceX96`
-  (`UnexpectedSqrtPrice`)
-- succeeds when `sqrtPriceX96 == expectedSqrtPriceX96`
-
-**Dynamic fee validation:**
-
-- reverts when `key.fee != DYNAMIC_FEE_FLAG` (`NotDynamicFee`)
-
-**Success path — commit correctness:**
-
-- `poolConfig[poolId]` populated from staged config
-- `_pendingSetup[poolId].exists == false` (deleted on commit)
-- `_poolInitialized[poolId] == true`
-- `PoolConfigInitialized` event emitted
-- correct selector returned
-
-**Reactive state after commit:**
-
-- `reactiveContract[poolId] == address(0)` immediately after init
-  (reactive not registered until Phase 3)
-
-**Partial init prevention:**
-
-- if `_beforeInitialize` reverts for any reason, pool is never created
-  in PoolManager — no partial state exists
+- Reverts when called by non-PoolManager
+- Reverts when no pending setup (`PoolNotStaged`)
+- Reverts when wrong sender (`UnauthorizedInitializer`)
+- Reverts when wrong sqrtPrice (`UnexpectedSqrtPrice`)
+- Reverts on non-dynamic-fee key (`NotDynamicFee`)
+- Success: config committed, pending setup deleted, pool initialized, event emitted
+- `reactiveContract[id] == address(0)` after init (Phase 3 not yet run)
 
 ## afterAddLiquidity
 
-Tests should validate:
-
-- correct entryAmt0 and entryAmt1 derivation
-- correct entryNotionalStable calculation
-- proper PositionState registration
-- active flag initialization
-- initial \_accrue() call with dt = 0
-- correct lastAccrualTime initialization
-- PositionRegistered event emission
+- Reverts (PositionAlreadyRegistered) on second add to same position key (MVP one-add rule)
+- Correct entryAmt0/entryAmt1 derivation from BalanceDelta
+- Correct entryNotionalStable calculation (all three deposit cases)
+- `pos.liquidity` stored correctly from `params.liquidityDelta`
+- `_accrue()` called with dt=0, initializes lastAccrualTime
+- PositionRegistered event emitted
+- Fuzz: snapshot immutability after registration
 
 ## beforeSwap
 
-Tests should validate:
-
-- dynamic fee correctly derived as:
-  baseLpFeeBps + bufferBps
-- no position state mutation occurs
-- no accrual logic executes
-- returned fee matches PoolConfig values
+- Dynamic fee correctly derived as `baseLpFeeBps + bufferBps` with OVERRIDE_FEE_FLAG
+- No position state mutation
+- Returned fee matches PoolConfig values
 
 ## afterSwap
 
-Tests should validate:
+- Buffer contribution calculated using FEE_DENOM (1e6 pips, not BPS_DENOM)
+- `bufferBalanceStable` updates correctly
+- `BufferFunded` emitted on non-zero contribution
+- `TickUpdated` emitted on every swap
+- No position accrual; no LP iteration
 
-- correct buffer contribution calculation
-- bufferBalanceStable updates correctly
-- TickUpdated event emission
-- BufferFunded event emission
-- no position accrual occurs
-- no LP position iteration occurs
+## beforeRemoveLiquidity (validation only)
 
-## beforeRemoveLiquidity
+- Reverts when position is not active (`PositionNotActive`)
+- Reverts when `uint128(-params.liquidityDelta) != pos.liquidity` (`PartialWithdrawalNotSupported`)
+- Does NOT mutate accrual state, IL, payout, or buffer state
+- Does NOT check minHoldSeconds
+- Returns correct selector on valid full withdrawal of active position
 
-Tests should validate:
+## afterRemoveLiquidity (all settlement logic)
 
-- minHoldSeconds enforcement
-- IneligibleClaim behavior
-- final \_accrue() execution ordering
-- correct \_computeIL() invocation
-- correct \_computePayout() invocation
-- pendingPayout storage correctness
-- AccrualUpdated event emission
+**Extraction:**
 
-## afterRemoveLiquidity
+- Extracts `outAmt0` and `outAmt1` correctly from BalanceDelta (fees included)
 
-Tests should validate:
+**Eligibility gate:**
 
-- payout transfer execution
-- buffer accounting updates
-- totalPaidOutStable updates
-- PositionState cleanup
-- active flag clearing
-- pendingPayout clearing
-- ClaimSettled / PartialPayout / NoClaim event emission
+- Emits `IneligibleClaim` and clears PositionState when `minHoldSeconds` not met
+- No accrual, IL, or payout computation when ineligible
+
+**Settlement path:**
+
+- Performs final `_accrue()` before computing payout
+- Computes IL using actual `outAmt0`/`outAmt1` from BalanceDelta
+- Applies three-cap logic correctly
+
+**Event semantics:**
+
+- `NoClaim` emitted when `IL_raw == 0`
+- `ClaimSettled` emitted when `IL_CAP` is binding and `payout > 0`
+- `PartialPayout` emitted when `COVERAGE_CAP` or `BUFFER_CAP` is binding
+- `PartialPayout(requested=IL_covered, actual=0)` when `IL_raw > 0` but `payout == 0`
+
+**CEI and cleanup:**
+
+- PositionState cleared (active=false) BEFORE payout transfer
+- Buffer accounting updated BEFORE payout transfer (strict CEI)
+- `bufferBalanceStable` decremented by payout
+- `totalPaidOutStable` incremented by payout
+- USDC transferred to LP after state is cleared
+
+**Defensive path:**
+
+- No-op return when position not active (before's gate already caught this)
 
 ---
 
 # Invariant Testing Goals
 
-Invariant tests should validate:
+**Pool setup:**
 
-**Pool setup invariants:**
+- `_poolInitialized[id]` implies pending setup deleted and config live
+- `_reactiveSet[id]` implies reactive non-zero and pool initialized
+- `_reactiveSet[id]` is monotonically true
 
-- `_poolInitialized[id]` implies `_pendingSetup[id].exists == false`
-- `_poolInitialized[id]` implies `poolConfig[id].admin != address(0)`
-- `_poolInitialized[id]` implies `poolConfig[id].maxPayoutPctOfBuffer <= BPS_DENOM`
-- `_reactiveSet[id]` implies `reactiveContract[id] != address(0)`
-- `_reactiveSet[id]` implies `_poolInitialized[id]`
-- `_reactiveSet[id]` is monotonically true (never reverts to false)
-
-**Accounting invariants:**
+**Accounting:**
 
 - earnedCoverageStable never decreases
 - inactive positions never accrue
@@ -414,44 +290,45 @@ Invariant tests should validate:
 - immutable snapshots never mutate
 - PoolConfig remains immutable after initialization
 - afterSwap never iterates LP positions
-- Reactive contracts never mutate accounting state
-- lifecycle transitions remain valid
+
+**Settlement execution:**
+
+- `bufferBalance + totalPaidOut == initial seed` (conservation)
+- buffer never grows under settlement-only operations
+- real token custody matches ledger payouts
 
 ---
 
 # Mandatory Edge Cases
 
-Always test:
-
 **Pool setup:**
 
-- pool initialization attempted before staging (`PoolNotStaged`)
-- pool initialization by wrong caller (`UnauthorizedInitializer`)
-- pool initialization with wrong price (`UnexpectedSqrtPrice`)
-- reactive registration before pool initialized (`PoolNotInitialized`)
-- reactive registration called twice (`ReactiveAlreadySet`)
-- re-staging after pool is initialized (`PoolAlreadyInitialized`)
+- Init before staging (`PoolNotStaged`)
+- Init by wrong caller (`UnauthorizedInitializer`)
+- Init with wrong price (`UnexpectedSqrtPrice`)
+- Reactive registration before init (`PoolNotInitialized`)
+- Reactive registration twice (`ReactiveAlreadySet`)
+- Re-staging after initialization (`PoolAlreadyInitialized`)
 
-**Position and accrual:**
+**Position:**
 
-- zero dt
-- same-block checkpoints
-- out-of-range accrual
-- minimum hold failures
-- maximum APR configuration
-- maximum payout caps
-- empty buffer conditions
-- repeated checkpoint calls
-- stale reactive events
-- inactive position access
+- Second add to same position key (`PositionAlreadyRegistered`)
+- Partial removal attempt (`PartialWithdrawalNotSupported`)
+- Removal of inactive position (`PositionNotActive`)
+- minHoldSeconds gate: ineligible withdrawal → `IneligibleClaim`, zero payout
+- IL_raw == 0 → `NoClaim`
+- IL_raw > 0, payout == 0 → `PartialPayout(requested, actual=0)`
+- Zero dt accrual
+- Same-block checkpoints
+- Out-of-range accrual
+- Empty buffer conditions
+- Maximum APR and payout caps
 
 ---
 
 # Naming Conventions
 
 ## Unit Tests
-
-Pattern:
 
 ```
 test_Function_WhenCondition_ExpectedBehavior()
@@ -461,39 +338,28 @@ Examples:
 
 ```
 test_StagePoolConfig_WhenNotOwner_Reverts()
-test_StagePoolConfig_WhenValidConfig_StoresPendingSetup()
-test_StagePoolConfig_WhenMaxPayoutPctExceedsDenom_Reverts()
 test_BeforeInitialize_WhenPoolNotStaged_Reverts()
-test_BeforeInitialize_WhenUnauthorizedInitializer_Reverts()
-test_BeforeInitialize_WhenWrongSqrtPrice_Reverts()
 test_BeforeInitialize_WhenValid_CommitsConfig()
 test_SetReactiveContract_WhenAlreadySet_Reverts()
-test_SetReactiveContract_WhenValid_SetsAddress()
+test_AfterAddLiquidity_WhenPositionExists_RevertsAlreadyRegistered()
+test_BeforeRemoveLiquidity_WhenInactive_RevertsPositionNotActive()
+test_BeforeRemoveLiquidity_WhenPartial_RevertsPartialWithdrawal()
+test_BeforeRemoveLiquidity_WhenValid_MutatesNoState()
+test_AfterRemoveLiquidity_WhenIneligible_EmitsIneligibleClaim()
+test_AfterRemoveLiquidity_WhenILZero_EmitsNoClaim()
+test_AfterRemoveLiquidity_WhenILCap_EmitsClaimSettled()
+test_AfterRemoveLiquidity_WhenCoverageCap_EmitsPartialPayout()
 test_Accrue_WhenDtZero_DoesNotModifyState()
 test_Accrue_WhenInRange_IncreasesCoverage()
-test_Accrue_WhenOutOfRange_DoesNotIncreaseCoverage()
 ```
 
 ## Fuzz Tests
-
-Pattern:
 
 ```
 testFuzz_Function_Property()
 ```
 
-Examples:
-
-```
-testFuzz_StagePoolConfig_ValidConfigAlwaysSucceeds()
-testFuzz_StagePoolConfig_InvalidBoundsAlwaysRevert()
-testFuzz_Accrue_CoverageNeverDecreases()
-testFuzz_Accrue_LargerNotionalProducesMoreCoverage()
-```
-
 ## Invariant Tests
-
-Pattern:
 
 ```
 invariant_PropertyName()
@@ -504,26 +370,16 @@ Examples:
 ```
 invariant_PoolInitializedImpliesPendingSetupDeleted()
 invariant_ReactiveSetImpliesInitialized()
-invariant_ReactiveSetIsMonotonicallyTrue()
 invariant_CoverageNeverDecreases()
+invariant_BufferConservedAcrossSettlements()
 invariant_EntrySnapshotsRemainImmutable()
 invariant_BufferBalanceNeverNegative()
 ```
 
 ## Integration Tests
 
-Pattern:
-
 ```
 test_Integration_WhenScenario_ExpectedOutcome()
-```
-
-Examples:
-
-```
-test_Integration_WhenFullSetupSequence_PoolOperational()
-test_Integration_WhenPositionRemoved_ReceivesCoveragePayout()
-test_Integration_WhenBufferInsufficient_PayoutIsLimited()
 ```
 
 ---
@@ -536,23 +392,24 @@ test_Integration_WhenBufferInsufficient_PayoutIsLimited()
 
 ## Unit Test Suites
 
-- `RangeGuardHook.t.sol` — hook-level tests:
-  permissions, `stagePoolConfig`, `_beforeInitialize` commit,
-  `setReactiveContract`, `seedBuffer`, access control
+- `RangeGuardHook.t.sol` — setup functions, access control
 - `Accrue.t.sol`
 - `ComputeIL.t.sol`
 - `ComputePayout.t.sol`
+- `AfterAddLiquidity.t.sol`
+- `BeforeSwap.t.sol`
+- `AfterSwap.t.sol`
+- `BeforeRemoveLiquidity.t.sol`
+- `AfterRemoveLiquidity.t.sol`
 
 ## Invariant Test Suites
 
-Prefer protocol-domain naming:
-
-- `PoolSetupInvariant.t.sol` — pool setup lifecycle invariants
+- `PoolSetupInvariant.t.sol`
 - `CoverageAccountingInvariant.t.sol`
 - `SettlementInvariant.t.sol`
+- `SettlementExecutionInvariant.t.sol`
 - `PositionLifecycleInvariant.t.sol`
-
-Avoid naming invariant suites after individual functions.
+- `BufferFundingInvariant.t.sol`
 
 ## Fuzz Test Suites
 
@@ -560,8 +417,17 @@ Avoid naming invariant suites after individual functions.
 - `AccrueFuzz.t.sol`
 - `ComputeILFuzz.t.sol`
 - `ComputePayoutFuzz.t.sol`
+- `AfterAddLiquidityFuzz.t.sol`
+- `BeforeSwapFuzz.t.sol`
+- `AfterSwapFuzz.t.sol`
+- `AfterRemoveLiquidityFuzz.t.sol`
 
----
+## Integration Test Suites
+
+- `PoolSetup.t.sol`
+- `AfterAddLiquidity.t.sol`
+- `Swap.t.sol`
+- `RemoveLiquidity.t.sol`
 
 # Future Testing Expansion
 
@@ -572,5 +438,4 @@ Future protocol versions should add testing for:
 - volatility-responsive fees
 - vault-based buffer custody
 - multi-position coordination
-- frontend event synchronization
 - CREATE2 atomic deployment verification

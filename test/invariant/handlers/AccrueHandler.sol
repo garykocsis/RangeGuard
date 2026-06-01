@@ -84,7 +84,6 @@ contract AccrueHandler is Test {
         pos.active = active;
         pos.entryNotionalStable = notional;
         pos.earnedCoverageStable = 0;
-        pos.pendingPayout = 0;
     }
 
     /// @notice The single fuzzed action: advance time, then accrue all three positions.

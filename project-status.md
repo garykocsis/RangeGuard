@@ -1,6 +1,6 @@
 # RangeGuard Project Status
 
-Last Updated: 2026-05-31 (Session 7 — beforeSwap / afterSwap)
+Last Updated: 2026-05-31 (Session 8 — beforeRemoveLiquidity / afterRemoveLiquidity)
 
 ## How to use this file
 
@@ -18,40 +18,53 @@ Last Updated: 2026-05-31 (Session 7 — beforeSwap / afterSwap)
 
 ## Now
 
-- **Active target:** `beforeRemoveLiquidity()` — `minHoldSeconds` eligibility gate (→
-  `IneligibleClaim`, skip all accrual/IL/payout when not met), then final `_accrue()` →
-  `_computeIL()` → `_computePayout()` → store `pendingPayout`; emit `AccrualUpdated`. Then
-  `afterRemoveLiquidity()` — execute `pendingPayout`, update buffer + `totalPaidOutStable`,
-  clear state; emit `ClaimSettled` / `PartialPayout` / `NoClaim`.
-- **Just completed:** `beforeSwap()` + `afterSwap()`. `beforeSwap` (now `view`) returns the
-  derived fee `uint24(baseLpFeeBps + bufferBps) | LPFeeLibrary.OVERRIDE_FEE_FLAG` and
-  `ZERO_DELTA`; reads `poolConfig` only. `afterSwap` books a NOTIONAL buffer credit
-  `contribution = |delta.amount1()| * bufferBps / FEE_DENOM` (FEE_DENOM = 1e6, v4 pips),
-  increments `bufferBalanceStable` + `totalSkimmedStable`, emits `BufferFunded` (skipped when 0)
-  + `TickUpdated` (every swap, post-swap tick via `getSlot0`); never accrues, never iterates.
-  Confirmed with user: add OVERRIDE flag, FEE_DENOM = 1e6, skip BufferFunded on zero contribution.
-- **Locked decisions resolved this session (3 v4 risks):**
-  - **OVERRIDE_FEE_FLAG required** — without it v4 ignores the returned fee (falls back to
-    `slot0.lpFee()` == 0 on a dynamic pool). Differential integration test proves it is charged.
-  - **FEE_DENOM = 1_000_000 (v4 pips), NOT BPS_DENOM** — fee fields are pips despite "Bps" names
-    (3000 = 0.30%); `BPS_DENOM` (1e4) would credit the buffer 100× too fast. Payout caps still 1e4.
-  - **Notional buffer (MVP)** — no token delta taken; real backing via `seedBuffer()`.
+- **Active target:** `checkpoint()` — permissionless single-position accrual driver and primary
+  Reactive Network entry point. `require(pos.active)`, `block.timestamp - lastAccrualTime >=
+  cfg.minCheckpointInterval` (else `TOO_SOON`), read current tick via `getSlot0`, `_accrue(poolId,
+  positionKey, currentTick)`, emit `Checkpointed`. Pairs next with `seedBuffer()` (real custody).
+- **Just completed:** `beforeRemoveLiquidity()` + `afterRemoveLiquidity()`. The settlement split is
+  v4-native: `beforeRemoveLiquidity` (now `view`) is VALIDATION ONLY — `PositionNotActive` if
+  inactive, `PartialWithdrawalNotSupported` if `uint256(-liquidityDelta) != pos.liquidity` (MVP
+  full-withdrawal). ALL settlement runs in `afterRemoveLiquidity`, because withdrawn out-amounts
+  exist only in the removal `BalanceDelta`: minHold hard gate (→ `IneligibleClaim` + clear), then
+  final `_accrue()` (exit tick via `getSlot0`) → `_computeIL()` on the FULL delta (fees included)
+  → `_computePayout()` (three caps) → strict-CEI payout (clear position + update buffer BEFORE the
+  real token1 transfer) → `ClaimSettled` / `PartialPayout` / `NoClaim`.
+- **Locked decisions resolved this session:**
+  - **PositionState change** — dropped `pendingPayout`, added `uint128 liquidity` (full position
+    liquidity, captured at registration; the withdrawal gate compares against it).
+  - **R1: re-add reverts `PositionAlreadyRegistered`** — one add per position (a silent skip would
+    desync `pos.liquidity` and brick withdrawal).
+  - **R3: `IL_raw > 0` but `payout == 0` → `PartialPayout(requested=IL_covered, actual=0)`**;
+    `NoClaim` strictly for `IL_raw == 0`.
+  - **Strict CEI** — buffer/`totalPaidOut` updates moved BEFORE the transfer (superset of the
+    locked "clear state before transfer"; safer vs reentrant tokens).
+  - **R2: notional buffer vs real custody** — accepted/documented; payout is a real token1 transfer
+    of the hook's own balance; ledger solvency ≠ real solvency until `seedBuffer()`.
 - **Carry-ins:**
-  - `poolState`, `BPS_DENOM`, `FEE_DENOM`, `LimitingFactor`, `BufferFunded`/`TickUpdated` live in src.
-  - Position owner attribution: production should attribute the real LP, not the v4 `sender`
-    (router). Documented MVP limitation.
-  - **Open sequencing question for `beforeRemoveLiquidity` (active next):** v4 withdrawn
-    out-amounts are known only AFTER removal, but spec calls `_computeIL` in
-    `beforeRemoveLiquidity` — likely compute IL/payout in `afterRemoveLiquidity` from realized
-    out-amounts. See `docs/session-4-computePayout-complete.md`.
-  - `afterRemoveLiquidity` is where the notional buffer meets real custody — confirm
-    payout-vs-`bufferBalanceStable` solvency handling. `seedBuffer()` still to implement.
-- **Tests:** 161 passing, 0 failing.
+  - **`seedBuffer()` still to implement** — provides the real token1 custody the payout transfer
+    depends on (integration test mints token1 to the hook to stand in for it).
+  - Position owner attribution: payout recipient is the v4 `sender` (owner=sender MVP).
+  - **Doc drift (R5, deferred):** `invariant-mapping.md` + `state-machine.md` still reference
+    `pendingPayout` / `PendingSettlement`; spec.md §6/§7 still narrate the old flow. Fix in a
+    separate doc pass.
+- **Tests:** 181 passing, 0 failing.
 
 ---
 
 ## Completed
 
+- **beforeRemoveLiquidity() / afterRemoveLiquidity()** — withdrawal/settlement callbacks.
+  `beforeRemoveLiquidity` (`view`) validates only: active position + full-withdrawal gate
+  (`removed == pos.liquidity`). `afterRemoveLiquidity` runs all settlement from the realized
+  removal `BalanceDelta`: minHold hard gate (`IneligibleClaim` + clear), final `_accrue()`
+  (exit tick via `getSlot0`), `_computeIL()` on the fees-included delta, `_computePayout()`
+  three-cap, strict-CEI payout (clear + buffer update before a real token1 transfer),
+  `ClaimSettled` / `PartialPayout` / `NoClaim`. PositionState dropped `pendingPayout`, added
+  `uint128 liquidity`; re-add now reverts `PositionAlreadyRegistered`. Full test suite: 14 unit
+  + 2 fuzz + 3 invariant (SettlementExecution + handler) + 1 integration (real add→swap→warp→
+  remove→ClaimSettled, custody/buffer/paidOut reconciled). (+20 tests → 181 total)
+  -> docs/session-8-remove-liquidity-complete.md
 - **beforeSwap() / afterSwap()** — swap-path callbacks. `beforeSwap` (`view`) returns the derived
   dynamic fee `(baseLpFeeBps + bufferBps) | OVERRIDE_FEE_FLAG` + `ZERO_DELTA`, reads `poolConfig`
   only. `afterSwap` books the notional buffer credit (`|delta.amount1()| * bufferBps / FEE_DENOM`,
@@ -111,8 +124,9 @@ Pool setup + afterAddLiquidity wired; remaining callbacks are selector-returning
 - [x] afterAddLiquidity() (register position, baseline \_accrue(); +17 tests, live-tick integration)
 - [x] beforeSwap() (return derived dynamic fee + OVERRIDE flag; view, no state touched)
 - [x] afterSwap() (notional buffer funding + TickUpdated; no accrual, no iteration; +21 tests)
-- [ ] beforeRemoveLiquidity() (eligibility -> \_accrue -> \_computeIL -> \_computePayout) ← current
-- [ ] afterRemoveLiquidity() (execute payout, update buffer, clear state)
+- [x] beforeRemoveLiquidity() (validation only: active + full-withdrawal gate; +6 unit tests)
+- [x] afterRemoveLiquidity() (v4-native settlement: minHold gate -> final \_accrue -> \_computeIL ->
+      \_computePayout -> strict-CEI payout; ClaimSettled/PartialPayout/NoClaim; +14 tests)
 
 ### Phase 3: Integration Testing
 

@@ -130,11 +130,11 @@ contract AfterAddLiquidityIntegration is BaseRangeGuardTest {
             assertGe(entryNotionalStable, entryAmt1, "notional covers at least the stable leg");
         }
         {
-            // dt = 0 baseline: clock seeded, nothing accrued, nothing pending.
-            (,,,,, uint32 depositTime, uint32 lastAccrualTime,,, uint256 earnedCoverageStable, uint256 pendingPayout) =
+            // dt = 0 baseline: clock seeded, nothing accrued; liquidity snapshots the add.
+            (,,,,, uint32 depositTime, uint32 lastAccrualTime,,, uint256 earnedCoverageStable, uint128 liquidity) =
                 rangeGuardHook.positions(poolId, posKey);
             assertEq(earnedCoverageStable, 0, "no coverage at registration");
-            assertEq(pendingPayout, 0, "no pending payout");
+            assertEq(liquidity, 1e18, "liquidity snapshots params.liquidityDelta");
             assertEq(depositTime, uint32(block.timestamp), "depositTime stamped now");
             assertEq(lastAccrualTime, depositTime, "accrual clock seeded to deposit time");
         }

@@ -40,16 +40,21 @@ Completed (Phase 2 — hook callbacks):
 - afterAddLiquidity() (register position + dt=0 accrual baseline; owner=sender MVP,
   re-add skip, live entry tick via getSlot0, PositionRegistered)
 - beforeSwap() / afterSwap() (derived fee + OVERRIDE_FEE_FLAG; notional buffer funding via
-  FEE_DENOM=1e6 v4 pips, BufferFunded + TickUpdated; no accrual, no iteration; 161 tests passing)
+  FEE_DENOM=1e6 v4 pips, BufferFunded + TickUpdated; no accrual, no iteration)
+- beforeRemoveLiquidity() / afterRemoveLiquidity() (v4-native settlement: beforeRemove is
+  validation-only — active + full-withdrawal gate; afterRemove runs minHold gate -> final
+  \_accrue -> \_computeIL (fees-included delta) -> \_computePayout -> strict-CEI payout;
+  ClaimSettled/PartialPayout/NoClaim; PositionState dropped pendingPayout, added uint128
+  liquidity; re-add reverts PositionAlreadyRegistered; 181 tests passing)
 
 Current implementation target:
 
-- beforeRemoveLiquidity() / afterRemoveLiquidity()
+- checkpoint()
 
 Upcoming implementation order:
 
-1. beforeRemoveLiquidity() / afterRemoveLiquidity() ← current
-2. checkpoint()
+1. checkpoint() ← current
+2. seedBuffer() (real buffer custody)
 3. Reactive Network contract
 4. Frontend dashboard
 
@@ -276,16 +281,19 @@ Do not introduce architectural changes without updating:
    - \_beforeInitialize() — Phase 2: PoolManager callback, validates + commits staged config
    - setReactiveContract() — Phase 3: external, onlyOwner, one-time reactive registration
 
-4. Hook callback implementation (current)
-   - afterAddLiquidity() ✅ (register position + dt=0 baseline)
+4. Hook callback implementation ✅
+   - afterAddLiquidity() ✅ (register position + dt=0 baseline; re-add reverts PositionAlreadyRegistered)
    - beforeSwap() ✅ (derived fee + OVERRIDE flag; view, no state touched)
    - afterSwap() ✅ (notional buffer funding + TickUpdated; no accrual, no iteration)
-   - beforeRemoveLiquidity() ← current
-   - afterRemoveLiquidity()
+   - beforeRemoveLiquidity() ✅ (validation only: active + full-withdrawal gate; view)
+   - afterRemoveLiquidity() ✅ (v4-native settlement: minHold gate -> final \_accrue -> \_computeIL
+     -> \_computePayout -> strict-CEI payout; ClaimSettled/PartialPayout/NoClaim)
 
-5. Callback-specific tests
+5. checkpoint() ← current (permissionless accrual driver; Reactive entry point), then seedBuffer()
 
-6. End-to-end integration testing
+6. Callback-specific tests
+
+7. End-to-end integration testing
 
 Do not begin implementation of a later phase until the current phase is complete and tested.
 
@@ -316,21 +324,26 @@ At the start of every session, Claude must:
 
 # Current Session State
 
-Last completed: beforeSwap() + afterSwap() — derived dynamic fee and notional buffer funding
-(161 tests passing). See docs/session-7-beforeSwap-afterSwap-complete.md.
-Current target: beforeRemoveLiquidity() (minHoldSeconds gate -> final \_accrue -> \_computeIL ->
-\_computePayout -> store pendingPayout), then afterRemoveLiquidity() (execute payout, update
-buffer + totalPaidOutStable, clear state; ClaimSettled / PartialPayout / NoClaim).
-Next up: checkpoint(), then the Reactive Network contract.
-Notes: beforeSwap is `view`, reads poolConfig only, returns
-`uint24(baseLpFeeBps + bufferBps) | LPFeeLibrary.OVERRIDE_FEE_FLAG` + ZERO_DELTA — the OVERRIDE
-flag is mandatory or v4 falls back to slot0.lpFee()==0 on a dynamic pool. afterSwap books a
-NOTIONAL buffer credit `|delta.amount1()| * bufferBps / FEE_DENOM` with FEE_DENOM=1_000_000 (v4
-pips — fee fields are pips despite the "Bps" names; BPS_DENOM=1e4 is ONLY for payout caps),
-increments bufferBalanceStable + totalSkimmedStable, emits BufferFunded (skipped on zero) +
-TickUpdated (every swap, post-swap tick via getSlot0); never accrues, never iterates positions.
-No token delta taken (notional buffer; real backing via seedBuffer(), still to implement).
-Carry-ins: \_computeIL sequencing in beforeRemoveLiquidity (v4 out-amounts known only AFTER
-removal — likely compute IL/payout in afterRemoveLiquidity); afterRemoveLiquidity is where the
-notional buffer meets real custody (confirm payout-vs-bufferBalanceStable solvency); position
-owner=sender remains an MVP limitation.
+Last completed: beforeRemoveLiquidity() + afterRemoveLiquidity() — v4-native settlement
+(181 tests passing). See docs/session-8-remove-liquidity-complete.md.
+Current target: checkpoint() — permissionless single-position accrual driver / Reactive entry
+point: require(active), enforce `block.timestamp - lastAccrualTime >= minCheckpointInterval`
+(TOO_SOON), read current tick via getSlot0, \_accrue(poolId, positionKey, currentTick), emit
+Checkpointed.
+Next up: seedBuffer() (real buffer custody), then the Reactive Network contract.
+Notes: the settlement split is forced by v4 — beforeRemoveLiquidity (now `view`) is VALIDATION
+ONLY (PositionNotActive if inactive; PartialWithdrawalNotSupported if `uint256(-liquidityDelta)
+!= pos.liquidity`). ALL settlement runs in afterRemoveLiquidity because withdrawn out-amounts
+exist only in the removal BalanceDelta: minHold hard gate (-> IneligibleClaim + clear), final
+\_accrue (exit tick via getSlot0; a removal never moves the price), \_computeIL on the FULL delta
+(fees INCLUDED, unlike the entry path which nets fees out), \_computePayout (three caps), then a
+strict-CEI payout — clear position + decrement bufferBalanceStable + increment totalPaidOutStable
+BEFORE the real `key.currency1.transfer(sender, payout)`. Events: ClaimSettled (IL cap bound,
+payout>0) / PartialPayout (coverage|buffer cap bound, incl. IL>0 but payout==0 -> actual=0) /
+NoClaim (IL_raw==0). PositionState dropped pendingPayout, added uint128 liquidity (captured at
+registration); re-add reverts PositionAlreadyRegistered (one add per position). payout <=
+bufferCap <= bufferBalanceStable (no underflow), but the ledger buffer is NOTIONAL — real
+solvency needs seedBuffer() backing (accepted MVP limitation).
+Carry-ins: seedBuffer() provides the real token1 custody the payout transfer depends on (tests
+mint token1 to the hook to stand in). Payout recipient = v4 sender (owner=sender MVP). Doc-fix pass complete: invariant-mapping.md, state-machine.md, testing-strategy.md, and context.md all updated to reflect v4-native
+settlement. spec.md §6/§7 targeted changes applied.
