@@ -21,27 +21,37 @@ Completed:
 - afterAddLiquidity()
 - beforeSwap() / afterSwap()
 - beforeRemoveLiquidity() / afterRemoveLiquidity()
+- checkpoint() (permissionless, accrual-only Reactive entry point)
+- seedBuffer() (real token1 custody backing the buffer)
 
 Next implementation target:
 
-- checkpoint()
+- Reactive contract (onlyReactive + emitOutOfRange/emitBackInRange)
 
 Planned next steps:
 
-- checkpoint() ← current
-- seedBuffer() (real buffer custody; pairs with the notional skim)
-- Reactive contract (onlyReactive + emitOutOfRange/emitBackInRange)
+- Reactive contract ← current (onlyReactive guard on \_reactiveSet, emitOutOfRange/
+  emitBackInRange, subscribe to TickUpdated, drive checkpoint() on heartbeat + crossings)
+- Doc-fix pass (reconcile invariant-mapping.md / state-machine.md / spec.md §6–§8 with the
+  v4-native settlement model + the \_getCurrentTick helper)
 - Frontend dashboard
 
 Recent architecture update:
 
+- checkpoint(poolId, positionKey): permissionless, accrual-ONLY (no IL/payout/transfer).
+  Guards \_poolInitialized -> active -> minCheckpointInterval (CheckpointTooSoon), reads the
+  live tick via the new private \_getCurrentTick(poolId), calls \_accrue, emits Checkpointed.
+  Safe permissionless because \_accrue is monotonic/range-gated/ceiling-capped and rate-limited.
+- seedBuffer(key, amount): admin-only (config.admin) REAL token1 custody. Order checks
+  \_poolInitialized -> admin -> amount>0, pulls via IERC20Minimal.transferFrom (CurrencyLibrary
+  has no transferFrom), then credits bufferBalanceStable ONLY (totalSkimmedStable untouched —
+  that is fee accounting). Resolves the session-8 R2 carry-in: payouts now draw from real
+  seeded custody, not a mint-to-hook stand-in.
 - Settlement is v4-native: beforeRemoveLiquidity is VALIDATION ONLY (active +
   full-withdrawal gate); ALL settlement (final \_accrue -> \_computeIL -> \_computePayout
   -> transfer -> cleanup) runs in afterRemoveLiquidity, because withdrawn out-amounts
   exist only in the removal BalanceDelta. PositionState dropped pendingPayout, added
   uint128 liquidity. Re-add now reverts PositionAlreadyRegistered (one add per position).
-  Payout is a real token1 transfer of the hook's own balance; ledger buffer is notional
-  (real backing via seedBuffer()).
 - Two-denominator system: fee fields (baseLpFeeBps, bufferBps) use
   FEE_DENOM = 1_000_000 (v4 pips); payout caps use BPS_DENOM = 10_000
 - beforeSwap must return fee | OVERRIDE_FEE_FLAG or v4 ignores it
