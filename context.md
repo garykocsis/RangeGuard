@@ -17,7 +17,7 @@ Completed:
 - BaseRangeGuardTest.t.sol in test/shared
 - spec.md, state-machine.md, invariant-mapping.md, testing-strategy.md
 - \_accrue(), \_computeIL(), \_computePayout() (Phase 1 complete)
-- Pool setup: stagePoolConfig + \_beforeInitialize + setReactiveContract
+- Pool setup: stagePoolConfig + \_beforeInitialize
 - afterAddLiquidity()
 - beforeSwap() / afterSwap()
 - beforeRemoveLiquidity() / afterRemoveLiquidity()
@@ -85,8 +85,8 @@ Config Model:
 
 - PoolConfig fields are immutable after pool initialization (\_beforeInitialize commit)
 - One PoolConfig per pool, keyed by PoolId
-- Three-phase pool setup: stagePoolConfig (owner) -> \_beforeInitialize (commit) -> setReactiveContract (owner, one-time)
-- Post-init privileged actions (ordered): setReactiveContract() (owner, one-time), then seedBuffer() (admin)
+- Two-phase pool setup: stagePoolConfig (owner) -> \_beforeInitialize (commit) -
+- Post-init privileged actions seedBuffer() (admin)
 
 ## 5. Five Pillars (Final)
 
@@ -163,9 +163,8 @@ Pillar 4 - LP Transparency (Coverage Report - KEY DIFFERENTIATOR):
 Pillar 5 - Pool Parameterization:
 
 - All PoolConfig fields immutable after pool initialization (\_beforeInitialize commit)
-- reactiveContract[poolId] set exactly once via setReactiveContract() --- \_reactiveSet guard permanently prevents any change after registration
 - No admin can change parameters post-init
-- Post-init privileged actions (ordered): setReactiveContract() (owner, one-time), seedBuffer() (admin)
+- Post-init privileged actions seedBuffer() (admin)
 - Hard bounds enforced at stagePoolConfig() time --- bad configs revert before pool is ever created
 - dynamicFeeBps always derived (baseLpFeeBps + bufferBps), never stored
 
@@ -178,7 +177,7 @@ Pillar 5 - Pool Parameterization:
 - accrual is always lazy
 - coverage only accrues while in range
 - pools must be initialized with DYNAMIC_FEE_FLAG enabled
-- PoolConfig commit is atomic in \_beforeInitialize (Phase 2); reactive registration deferred to setReactiveContract (Phase 3) due to circular deployment dependency --- \_reactiveSet guard preserves trustlessness after setup
+- PoolConfig commit is atomic in \_beforeInitialize (Phase 2);
 
 ## 7. PoolConfig Struct (Final, Immutable)
 
@@ -234,7 +233,7 @@ uint256 SECONDS_PER_YEAR_360    = 31_104_000
 //   bufferCap = bufferBalance * maxPayoutPctOfBuffer / BPS_DENOM
 // Mixing these denominators causes 100x errors in buffer accumulation.
 
-// Protocol owner --- gates stagePoolConfig() and setReactiveContract()
+// Protocol owner --- gates stagePoolConfig()
 address immutable owner
 
 // Pool setup
@@ -304,8 +303,6 @@ beforeInitialize (Phase 2 --- callback, PoolManager-only):
 - reactiveContract NOT set here --- see Phase 3
 - emits PoolConfigInitialized
 
-setReactiveContract (Phase 3 --- external, onlyOwner, after reactive deployed):
-
 - one-time only: \_reactiveSet guard reverts ReactiveAlreadySet on second call
 - sets reactiveContract[poolId]; sets \_reactiveSet[poolId] = true
 - emits ReactiveContractSet
@@ -359,7 +356,7 @@ afterRemoveLiquidity:
 | --------------------- | ------------------------------------------ |
 | PoolConfigStaged      | stagePoolConfig() --- Phase 1              |
 | PoolConfigInitialized | \_beforeInitialize() on commit --- Phase 2 |
-| ReactiveContractSet   | setReactiveContract() --- Phase 3          |
+| PositionClosed        | afterRemoveLiquidity                       |
 | PositionRegistered    | afterAddLiquidity                          |
 | AccrualUpdated        | \_accrue() - every call                    |
 | TickUpdated           | afterSwap - every swap (lightweight)       |
@@ -377,36 +374,19 @@ afterRemoveLiquidity:
 checkpoint(PoolId, bytes32 positionKey):
 
 - Permissionless, one position per call
-- Required dt >= minCheckpointInterval (from PoolConfig, per pool)
-- Call \_accrue(poolId, positionKey, currentTick)
-- Emit AccrualUpdated (and optionally Checkpointed)
+- Requires pool initialized; requires position active
+- Required dt >= minCheckpointInterval → revert CheckpointTooSoon
+- Reads current tick via \_getCurrentTick(poolId)
+- Calls \_accrue(poolId, positionKey, currentTick)
+- Emits AccrualUpdated + Checkpointed
 
 Reactive Contract responsibilities:
 
 Job 1 - Range transition detection (event-driven):
 
-- Subscribe to TickUpdated events from hook
-- Track lastKnownRangeStatus per position (in Reactive state)
-- On tick crossing:
-  ```
-  if wasInRange && !isInRange:
-      call checkpoint() -> hook calls emitOutOfRange()
-  if !wasInRange && isInRange:
-      call checkpoint() -> hook calls emitBackInRange()
-  ```
-
-Job 2 - Periodic heartbeat (time-driven):
-
-- Call checkpoint() every checkpointInterval for each active in-range position
-- Generates intermediate AccrualUpdated events for coverage report
-
-Hook functions callable by Reactive Contract only:
-
-emitOutOfRange(PoolId, bytes32 positionKey, int24 currentTick)
-emitBackInRange(PoolId, bytes32 positionKey, int24 currentTick)
-(access controlled: only reactiveContract[poolId] address may call)
-
-`reactiveContract[poolId]` set via setReactiveContract() (Phase 3), after reactive contract is deployed with hook address. \_reactiveSet guard ensures one-time registration.
+- Subscribe to PositionRegistered → add position to tracking,
+  init lastKnownRangeStatus
+- Subscribe to TickUpdated → detect range crossings:
 
 ## 12. View Functions (Final)
 
@@ -503,7 +483,7 @@ Demo Pool setup:
 | 1    | \_accrue()           | accrual engine                                                                        |
 | 2    | \_computeIL()        | IL math                                                                               |
 | 3    | \_computePayout()    | three-cap logic + limitingFactor                                                      |
-| 4    | Hook setup functions | stagePoolConfig, \_beforeInitialize commit, setReactiveContract                       |
+| 4    | Hook setup functions | stagePoolConfig, \_beforeInitialize commit                                            |
 | 5    | Hook callbacks       | afterAddLiquidity, beforeSwap, afterSwap, beforeRemoveLiquidity, afterRemoveLiquidity |
 | 6    | checkpoint()         | permissionless + reactive entry point                                                 |
 | 7    | Reactive Contract    | range detection + heartbeat                                                           |

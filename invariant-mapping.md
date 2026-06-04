@@ -92,10 +92,8 @@ preserve these invariants under all valid execution paths.
 - Reactive contracts must never directly mutate accounting state
 - only `config.admin` (per-pool) may call `seedBuffer()`
 - only `owner` (contract-level) may call `stagePoolConfig()`
-- only `owner` (contract-level) may call `setReactiveContract()`
 - only the `authorizedInitializer` designated at staging may trigger the
   `_beforeInitialize` commit by calling `PoolManager.initialize()`
-- `setReactiveContract()` may only be called once per pool — `_reactiveSet`
   guard permanently prevents any subsequent change to `reactiveContract[poolId]`
 - `PoolConfig` parameters must remain immutable after initialization
 - `dynamicFeeBps` must always be derived and never independently stored
@@ -131,15 +129,6 @@ These invariants govern the three-phase pool initialization sequence.
 - `_poolInitialized[id] == true` must imply `poolConfig[id].admin != address(0)`
 - `_poolInitialized[id] == true` must imply `poolConfig[id].maxPayoutPctOfBuffer <= BPS_DENOM`
 
-## Reactive registration invariants (Phase 3)
-
-- `setReactiveContract()` must reject `reactive == address(0)` (`ZeroReactive`)
-- `setReactiveContract()` must reject calls on uninitialized pools (`PoolNotInitialized`)
-- `setReactiveContract()` must reject second calls (`ReactiveAlreadySet`)
-- `_reactiveSet[id] == true` must imply `reactiveContract[id] != address(0)`
-- `_reactiveSet[id] == true` must imply `_poolInitialized[id] == true`
-- `_reactiveSet[id]` is monotonically true — once set, it can never return to false
-
 ---
 
 # Initialization Invariants
@@ -149,8 +138,6 @@ These invariants govern the three-phase pool initialization sequence.
 - partially initialized pools must never exist — `_beforeInitialize` is the
   atomic commit point; if it reverts, the pool is never created in PoolManager
 - `PoolConfig` commit must occur exactly once per pool
-- `reactiveContract[poolId]` registration occurs in Phase 3 (`setReactiveContract()`),
-  NOT during `_beforeInitialize`
 
 ---
 

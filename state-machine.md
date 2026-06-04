@@ -59,19 +59,6 @@ Properties:
 - `_poolInitialized[poolId] == true`
 - `poolConfig[poolId]` is live and immutable
 - `_pendingSetup[poolId].exists == false` (deleted on commit)
-- `reactiveContract[poolId] == address(0)` — not yet registered
-- `_reactiveSet[poolId] == false`
-
-### ReactiveRegistered
-
-Owner deployed the reactive contract and called `setReactiveContract()`.
-
-Properties:
-
-- `_reactiveSet[poolId] == true`
-- `reactiveContract[poolId] != address(0)`
-- `onlyReactive(poolId)` access control is now functional
-- `_reactiveSet` is permanently true — no further changes possible
 
 ### Seeded
 
@@ -97,11 +84,8 @@ owner → hook.stagePoolConfig() again (before init)
 authorizedInitializer → PoolManager.initialize(key, expectedSqrtPriceX96)
   Staged → Initialized
 
-owner → hook.setReactiveContract(key, reactive)
-  Initialized → ReactiveRegistered
-
 admin → hook.seedBuffer(key, amount)
-  ReactiveRegistered → Seeded
+  Initialized → Seeded
 ```
 
 ## Pool Setup Invalid Transitions
@@ -111,14 +95,12 @@ Unregistered → Initialized     (PoolNotStaged)
 Staged → Initialized            with wrong caller (UnauthorizedInitializer)
 Staged → Initialized            with wrong price  (UnexpectedSqrtPrice)
 Any state → Staged              after initialized  (PoolAlreadyInitialized)
-Any state → ReactiveRegistered  more than once     (ReactiveAlreadySet)
-Unregistered → ReactiveRegistered                  (PoolNotInitialized)
+
 ```
 
 ## Minimum Pool State for LP Interaction
 
 - Position registration: requires **Initialized** or later
-- Reactive automation: requires **ReactiveRegistered** or later
 - IL payout execution: requires **Seeded** (real token balance)
 - **Recommended minimum: Seeded**
 
@@ -229,7 +211,6 @@ Reactive contract owns:
 Owner owns:
 
 - pool staging (`stagePoolConfig`)
-- reactive registration (`setReactiveContract`)
 
 Config admin owns:
 
@@ -247,7 +228,6 @@ Pool setup state is derived from:
 
 - `_pendingSetup[poolId].exists` → Staged
 - `_poolInitialized[poolId]` → Initialized or later
-- `_reactiveSet[poolId]` → ReactiveRegistered or later
 - `poolState[poolId].bufferBalanceStable > 0` → Seeded
 
 Range status is derived from:
@@ -274,13 +254,12 @@ block.timestamp - depositTime >= minHoldSeconds
 
 ### Pool setup states
 
-| State              | Display                          |
-| ------------------ | -------------------------------- |
-| Unregistered       | "Pool not configured"            |
-| Staged             | "Pool pending initialization"    |
-| Initialized        | "Pool active — reactive pending" |
-| ReactiveRegistered | "Pool active — buffer pending"   |
-| Seeded             | "Pool fully operational"         |
+| State        | Display                        |
+| ------------ | ------------------------------ |
+| Unregistered | "Pool not configured"          |
+| Staged       | "Pool pending initialization"  |
+| Initialized  | "Pool active — buffer pending" |
+| Seeded       | "Pool fully operational"       |
 
 ### Position states
 

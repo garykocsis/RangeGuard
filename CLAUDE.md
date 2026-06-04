@@ -35,8 +35,8 @@ Completed (Phase 1):
 
 Completed (Phase 2 — hook callbacks):
 
-- Pool setup functions: stagePoolConfig() + \_beforeInitialize() + setReactiveContract()
-  (three-phase bring-up; owner as explicit constructor arg)
+- Pool setup functions: stagePoolConfig() + \_beforeInitialize()
+  (two-phase bring-up; owner as explicit constructor arg)
 - afterAddLiquidity() (register position + dt=0 accrual baseline; owner=sender MVP,
   re-add skip, live entry tick via getSlot0, PositionRegistered)
 - beforeSwap() / afterSwap() (derived fee + OVERRIDE_FEE_FLAG; notional buffer funding via
@@ -68,19 +68,17 @@ Upcoming implementation order:
 
 # Core Architecture Rules
 
-Pool setup (three-phase pattern — mandatory):
+Pool setup (two-phase pattern — mandatory):
 
 - pool setup follows three ordered phases:
   Phase 1: stagePoolConfig() — onlyOwner, called before PoolManager.initialize()
   Phase 2: \_beforeInitialize() — PoolManager callback, commits staged config atomically
-  Phase 3: setReactiveContract() — onlyOwner, one-time, called after reactive deployment
 - stagePoolConfig() is external and onlyOwner (NOT internal-only)
 - \_beforeInitialize() validates: DYNAMIC_FEE_FLAG, staged config exists, sender ==
   authorizedInitializer, sqrtPriceX96 == expectedSqrtPriceX96 — revert on any failure
-- PoolConfig is committed atomically inside \_beforeInitialize(); pool never exists
+- PoolConfig commit is atomic in \_beforeInitialize (Phase 2); Reactive contract
+  authorization is via AbstractCallback (authorizedSenderOnly — Callback Proxy); pool never exists
   without valid PoolConfig (PoolNotStaged revert prevents this)
-- setReactiveContract() is one-time only — \_reactiveSet guard permanently locks
-  reactiveContract[poolId] after initial registration
 - pools must initialize with DYNAMIC_FEE_FLAG enabled
 - DYNAMIC_FEE_FLAG enforcement is mandatory at both stagePoolConfig() and \_beforeInitialize()
 - pools must never exist without valid immutable PoolConfig
@@ -245,7 +243,6 @@ Never:
 - duplicate accrual logic across callbacks
 - mutate accounting state from Reactive contracts
 - treat stagePoolConfig() as internal-only (it is external, onlyOwner)
-- call setReactiveContract() more than once per pool
 - allow PoolManager.initialize() to succeed without a staged config
 - allow PoolManager.initialize() from an unauthorized caller or with wrong sqrtPrice
 
@@ -285,7 +282,6 @@ Do not introduce architectural changes without updating:
 3. Hook pool setup functions ✅
    - stagePoolConfig() — Phase 1: external, onlyOwner, validates and stages config
    - \_beforeInitialize() — Phase 2: PoolManager callback, validates + commits staged config
-   - setReactiveContract() — Phase 3: external, onlyOwner, one-time reactive registration
 
 4. Hook callback implementation ✅
    - afterAddLiquidity() ✅ (register position + dt=0 baseline; re-add reverts PositionAlreadyRegistered)
