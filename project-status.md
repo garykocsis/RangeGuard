@@ -167,7 +167,7 @@ Phase 3B: Protocol Completion
 Reactive contract
 
 - AbstractCallback inheritance; constructor adds \_callbackSender arg
-- checkpointCallback(address, PoolId, bytes32) — permissionless RVM heartbeat entry point
+- checkpointCallback(address, PoolId, bytes32) — authorizedSenderOnly, atomic
 - checkpointAndEmitOutOfRange(address, PoolId, bytes32) — authorizedSenderOnly, atomic
 - checkpointAndEmitBackInRange(address, PoolId, bytes32) — authorizedSenderOnly, atomic
 - \_lastRangeEventInRange guard initialized in afterAddLiquidity

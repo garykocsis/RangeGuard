@@ -512,13 +512,14 @@ function checkpoint(PoolId poolId, bytes32 positionKey) external {
 ```solidity
 /// @notice Reactive Network heartbeat entry point. Wraps checkpoint() with the
 ///         required RVM ID sender placeholder as the first parameter.
-/// @dev Permissionless (same gates as checkpoint()). The sender arg is the ReactVM
+/// @dev  The sender arg is the ReactVM
 ///      contract ID injected by the network — it is not validated and is ignored.
+///      onlu called by reactive network
 function checkpointCallback(
     address /* sender */,       // RVM ID placeholder — ignored
     PoolId   poolId,
     bytes32  positionKey
-) external {
+) external authorizedSenderOnly {
     if (!_poolInitialized[poolId])                                    revert PoolNotInitialized();
     PositionState storage pos = positions[poolId][positionKey];
     PoolConfig    storage cfg = poolConfig[poolId];
@@ -708,7 +709,7 @@ locally). `checkpoint()` is permissionless so no hook changes are required.
 | Function                         | Caller                 | Rate-limited | Sender param | Emits                                    |
 | -------------------------------- | ---------------------- | ------------ | ------------ | ---------------------------------------- |
 | `checkpoint()`                   | Anyone                 | Yes          | No           | `AccrualUpdated` + `Checkpointed`        |
-| `checkpointCallback()`           | Anyone (RVM)           | Yes          | Yes (RVM ID) | `AccrualUpdated` + `Checkpointed`        |
+| `checkpointCallback()`           | authorizedSenderOnly   | Yes          | Yes (RVM ID) | `AccrualUpdated` + `Checkpointed`        |
 | `checkpointAndEmitOutOfRange()`  | `authorizedSenderOnly` | No           | Yes (RVM ID) | `AccrualUpdated` + `PositionOutOfRange`  |
 | `checkpointAndEmitBackInRange()` | `authorizedSenderOnly` | No           | Yes (RVM ID) | `AccrualUpdated` + `PositionBackInRange` |
 
