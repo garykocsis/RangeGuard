@@ -80,12 +80,16 @@ Validate isolated function correctness:
 
 - `stagePoolConfig()`
 - `_beforeInitialize()` commit behavior
-- `setReactiveContract()`
 - `_accrue()`
 - `_computeIL()`
 - `_computePayout()`
 - `_beforeRemoveLiquidity()` (validation only)
 - `_afterRemoveLiquidity()` (all settlement logic)
+- `checkpointCallback()` (RVM ID sender param, same gates as checkpoint())
+- `checkpointAndEmitOutOfRange()` (authorizedSenderOnly, guard, atomic)
+- `checkpointAndEmitBackInRange()` (authorizedSenderOnly, guard, atomic)
+- `PositionClosed` event emission
+- `_lastRangeEventInRange` guard initialization
 - PoolConfig validation
 - checkpoint interval enforcement
 - access control
@@ -94,11 +98,11 @@ Validate isolated function correctness:
 
 Validate complete protocol flows:
 
-- full pool setup sequence (stagePoolConfig → initialize → setReactiveContract → seedBuffer)
+- full pool setup sequence (stagePoolConfig → initialize → seedBuffer)
 - full LP lifecycle (add → checkpoint → warp → remove → ClaimSettled)
 - swap interactions and buffer funding
 - range transition flows
-- Reactive callback coordination
+- Reactive callback coordination (mock Callback Proxy → checkpointAndEmit\*)
 
 ## Invariant Tests
 
@@ -143,16 +147,6 @@ Tests should validate:
 - Success: `_staged[poolId]` populated, `PoolConfigStaged` emitted
 - Re-stage before init: owner overwrites successfully
 - Fuzz: valid configs round-trip; out-of-bound values always revert
-
-## setReactiveContract() (Phase 3)
-
-Tests should validate:
-
-- Reverts when caller is not owner (`NotOwner`)
-- Reverts when pool not initialized (`PoolNotInitialized`)
-- Reverts on second call (`ReactiveAlreadySet`)
-- Reverts when `reactive == address(0)` (`ZeroReactive`)
-- Success: `reactiveContract[id]` set, `_reactiveSet[id]` true, event emitted
 
 ---
 
@@ -202,7 +196,6 @@ Tests should validate:
 - Reverts when wrong sqrtPrice (`UnexpectedSqrtPrice`)
 - Reverts on non-dynamic-fee key (`NotDynamicFee`)
 - Success: config committed, pending setup deleted, pool initialized, event emitted
-- `reactiveContract[id] == address(0)` after init (Phase 3 not yet run)
 
 ## afterAddLiquidity
 
@@ -211,6 +204,7 @@ Tests should validate:
 - Correct entryNotionalStable calculation (all three deposit cases)
 - `pos.liquidity` stored correctly from `params.liquidityDelta`
 - `_accrue()` called with dt=0, initializes lastAccrualTime
+- `_lastRangeEventInRange` initialized correctly based on entry tick vs tick range
 - PositionRegistered event emitted
 - Fuzz: snapshot immutability after registration
 
@@ -259,6 +253,8 @@ Tests should validate:
 - `ClaimSettled` emitted when `IL_CAP` is binding and `payout > 0`
 - `PartialPayout` emitted when `COVERAGE_CAP` or `BUFFER_CAP` is binding
 - `PartialPayout(requested=IL_covered, actual=0)` when `IL_raw > 0` but `payout == 0`
+- `PositionClosed` emitted on ALL four settlement paths (ClaimSettled/NoClaim/
+  IneligibleClaim/PartialPayout) in the same transaction
 
 **CEI and cleanup:**
 
@@ -272,6 +268,34 @@ Tests should validate:
 
 - No-op return when position not active (before's gate already caught this)
 
+## checkpointCallback()
+
+- RVM ID `sender` param accepted and ignored
+- Same gates as `checkpoint()`: `_poolInitialized` → active → `minCheckpointInterval`
+- Reverts `PoolNotInitialized` when pool not initialized
+- Reverts `PositionNotActive` when position inactive
+- Reverts `CheckpointTooSoon` when interval not elapsed
+- Emits `AccrualUpdated` + `Checkpointed`
+- Permissionless — any caller including Callback Proxy
+
+## checkpointAndEmitOutOfRange()
+
+- Reverts when caller is not Callback Proxy (`authorizedSenderOnly`)
+- Reverts `PositionNotActive` when position inactive
+- Reverts `PositionAlreadyOutOfRange` when `_lastRangeEventInRange` is already false
+- Not rate-limited — no `minCheckpointInterval` check
+- Atomic: `_accrue` + `_lastRangeEventInRange = false` + `PositionOutOfRange` emit
+- RVM ID `sender` param accepted and ignored
+
+## checkpointAndEmitBackInRange()
+
+- Reverts when caller is not Callback Proxy (`authorizedSenderOnly`)
+- Reverts `PositionNotActive` when position inactive
+- Reverts `PositionAlreadyInRange` when `_lastRangeEventInRange` is already true
+- Not rate-limited — no `minCheckpointInterval` check
+- Atomic: `_accrue` + `_lastRangeEventInRange = true` + `PositionBackInRange` emit
+- RVM ID `sender` param accepted and ignored
+
 ---
 
 # Invariant Testing Goals
@@ -279,8 +303,6 @@ Tests should validate:
 **Pool setup:**
 
 - `_poolInitialized[id]` implies pending setup deleted and config live
-- `_reactiveSet[id]` implies reactive non-zero and pool initialized
-- `_reactiveSet[id]` is monotonically true
 
 **Accounting:**
 
@@ -297,6 +319,17 @@ Tests should validate:
 - buffer never grows under settlement-only operations
 - real token custody matches ledger payouts
 
+**Range event guard:**
+
+- `_lastRangeEventInRange` must alternate correctly — `checkpointAndEmitOutOfRange`
+  only valid when last event was in-range; `checkpointAndEmitBackInRange` only valid
+  when last event was out-of-range
+- `PositionClosed` always emitted in same transaction as settlement event
+
+**Authorization:**
+
+- `authorizedSenderOnly` functions revert for all non-Callback-Proxy callers
+
 ---
 
 # Mandatory Edge Cases
@@ -306,9 +339,9 @@ Tests should validate:
 - Init before staging (`PoolNotStaged`)
 - Init by wrong caller (`UnauthorizedInitializer`)
 - Init with wrong price (`UnexpectedSqrtPrice`)
-- Reactive registration before init (`PoolNotInitialized`)
-- Reactive registration twice (`ReactiveAlreadySet`)
 - Re-staging after initialization (`PoolAlreadyInitialized`)
+- Callback Proxy check: non-proxy caller reverts on
+  `checkpointAndEmitOutOfRange` / `checkpointAndEmitBackInRange`
 
 **Position:**
 
@@ -323,6 +356,9 @@ Tests should validate:
 - Out-of-range accrual
 - Empty buffer conditions
 - Maximum APR and payout caps
+- `PositionAlreadyOutOfRange`: second consecutive out-of-range call reverts
+- `PositionAlreadyInRange`: second consecutive in-range call reverts
+- `PositionClosed` emitted on all four settlement paths
 
 ---
 
@@ -340,7 +376,6 @@ Examples:
 test_StagePoolConfig_WhenNotOwner_Reverts()
 test_BeforeInitialize_WhenPoolNotStaged_Reverts()
 test_BeforeInitialize_WhenValid_CommitsConfig()
-test_SetReactiveContract_WhenAlreadySet_Reverts()
 test_AfterAddLiquidity_WhenPositionExists_RevertsAlreadyRegistered()
 test_BeforeRemoveLiquidity_WhenInactive_RevertsPositionNotActive()
 test_BeforeRemoveLiquidity_WhenPartial_RevertsPartialWithdrawal()
@@ -349,8 +384,12 @@ test_AfterRemoveLiquidity_WhenIneligible_EmitsIneligibleClaim()
 test_AfterRemoveLiquidity_WhenILZero_EmitsNoClaim()
 test_AfterRemoveLiquidity_WhenILCap_EmitsClaimSettled()
 test_AfterRemoveLiquidity_WhenCoverageCap_EmitsPartialPayout()
+test_AfterRemoveLiquidity_AllPaths_EmitsPositionClosed()
 test_Accrue_WhenDtZero_DoesNotModifyState()
 test_Accrue_WhenInRange_IncreasesCoverage()
+test_CheckpointAndEmitOutOfRange_WhenAlreadyOutOfRange_Reverts()
+test_CheckpointAndEmitBackInRange_WhenAlreadyInRange_Reverts()
+test_CheckpointAndEmitOutOfRange_WhenNotCallbackProxy_Reverts()
 ```
 
 ## Fuzz Tests
@@ -369,11 +408,12 @@ Examples:
 
 ```
 invariant_PoolInitializedImpliesPendingSetupDeleted()
-invariant_ReactiveSetImpliesInitialized()
 invariant_CoverageNeverDecreases()
 invariant_BufferConservedAcrossSettlements()
 invariant_EntrySnapshotsRemainImmutable()
 invariant_BufferBalanceNeverNegative()
+invariant_RangeEventAlternatesCorrectly()
+invariant_CallbackProxyAuthorizationEnforced()
 ```
 
 ## Integration Tests
@@ -401,6 +441,9 @@ test_Integration_WhenScenario_ExpectedOutcome()
 - `AfterSwap.t.sol`
 - `BeforeRemoveLiquidity.t.sol`
 - `AfterRemoveLiquidity.t.sol`
+- `CheckpointCallback.t.sol`
+- `CheckpointAndEmitOutOfRange.t.sol`
+- `CheckpointAndEmitBackInRange.t.sol`
 
 ## Invariant Test Suites
 
@@ -428,6 +471,7 @@ test_Integration_WhenScenario_ExpectedOutcome()
 - `AfterAddLiquidity.t.sol`
 - `Swap.t.sol`
 - `RemoveLiquidity.t.sol`
+- `ReactiveCallbacks.t.sol`
 
 # Future Testing Expansion
 

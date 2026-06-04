@@ -95,17 +95,14 @@ Every line in the coverage report maps to a real on-chain event:
 ### Pillar 5: Pool Parameterization
 
 - PoolConfig fields are immutable after pool initialization --- hard bounds enforced at stagePoolConfig() time
-- reactiveContract[poolId] is set exactly once via setReactiveContract() after pool initialization --- \_reactiveSet guard permanently prevents any subsequent change
 - Pool bring-up uses a three-phase setup sequence (see Section 4):
   - Phase 1 --- stagePoolConfig(): owner stages config before pool exists in PoolManager
   - Phase 2 --- \_beforeInitialize(): commits staged config atomically when pool is initialized
-  - Phase 3 --- setReactiveContract(): owner registers reactive contract address after its deployment
+
 - Hard bounds enforced at stagePoolConfig() time --- bad configs revert before pool is ever created
 - dynamicFeeBps is always derived (baseLpFeeBps + bufferBps) --- never stored separately, preventing drift
-- Post-init privileged actions (two, ordered):
-  1. setReactiveContract() --- onlyOwner, one-time only, called after reactive contract is deployed
-  2. seedBuffer() --- config.admin only, funds the IL coverage buffer
-- Production deployments use CREATE2 for atomic hook + reactive deployment (no three-phase gap). MVP uses sequential deployment for simplicity; \_reactiveSet guard preserves trustlessness after setup.
+- Post-init privileged actions :
+  1. seedBuffer() --- config.admin only, funds the IL coverage buffer
 
 ## 4. PoolConfig Struct (Immutable)
 
@@ -166,9 +163,9 @@ uint256 constant SECONDS_PER_YEAR_360    = 31_104_000;
 uint256 constant FEE_DENOM               = 1_000_000;
 ```
 
-### Initialization Functions (Three-Phase Setup)
+### Initialization Functions (2 Phase Setup)
 
-**Why three phases:** v4's `beforeInitialize` callback receives no `hookData` --- per-pool config cannot be passed through it. Additionally, the reactive contract requires the hook address at deployment, creating a circular dependency resolved by deferring reactive registration to Phase 3.
+**Why two phases:** v4's `beforeInitialize` callback receives no `hookData` --- per-pool config cannot be passed through it.
 
 #### Phase 1 --- stagePoolConfig (external, onlyOwner)
 
@@ -222,25 +219,6 @@ On success: `poolConfig[poolId] = _pendingSetup[poolId].config`,
 `delete _pendingSetup[poolId]`, `_poolInitialized[poolId] = true`,
 emits `PoolConfigInitialized(poolId, config)`.
 
-Note: `reactiveContract[poolId]` is NOT set here --- it remains `address(0)` until Phase 3.
-
-#### Phase 3 --- setReactiveContract (external, onlyOwner, one-time)
-
-```solidity
-/// @notice Register the reactive contract address after it has been deployed.
-/// @dev onlyOwner. Callable exactly once per pool. _reactiveSet guard permanently locks after call.
-function setReactiveContract(PoolKey calldata key, address reactive) external onlyOwner;
-```
-
-Checks:
-
-- `PoolNotInitialized` if `!_poolInitialized[poolId]`
-- `ReactiveAlreadySet` if `_reactiveSet[poolId]` is true
-- `ZeroReactive` if `reactive == address(0)`
-
-On success: `reactiveContract[poolId] = reactive`, `_reactiveSet[poolId] = true`,
-emits `ReactiveContractSet(poolId, reactive)`.
-
 #### PendingPoolSetup Struct
 
 ```solidity
@@ -261,13 +239,11 @@ error PoolNotInitialized();
 error PoolNotStaged();
 error NotOwner();
 error ZeroAdmin();
-error ZeroReactive();
 error ZeroInitializer();
 error ZeroSqrtPrice();
 error NotDynamicFee();
 error UnauthorizedInitializer();
 error UnexpectedSqrtPrice();
-error ReactiveAlreadySet();
 error InvalidFeeConfig();
 error InvalidApr();
 error InvalidPayoutCaps();
@@ -279,15 +255,14 @@ error UnsupportedDayCount();
 ### Hook-Level Mappings
 
 ```solidity
-// Protocol owner --- gates stagePoolConfig() and setReactiveContract()
+// Protocol owner --- gates stagePoolConfig()
 address public immutable owner;
 
 // Pool setup
 mapping(PoolId => PendingPoolSetup) private _pendingSetup;      // transient; deleted on commit
 mapping(PoolId => PoolConfig)       public  poolConfig;          // live after _beforeInitialize
 mapping(PoolId => bool)             private _poolInitialized;
-mapping(PoolId => address)          public  reactiveContract;    // live after setReactiveContract
-mapping(PoolId => bool)             private _reactiveSet;        // one-time guard
+
 
 // Pool and position state
 mapping(PoolId => PoolState)        public poolState;
@@ -351,16 +326,17 @@ This handles all three deposit cases naturally:
 
 ## 6. Hook Callbacks & Responsibilities
 
-| Callback                                 | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| stagePoolConfig (Phase 1, onlyOwner)     | Validate all PoolConfig bounds, authorizedInitializer, expectedSqrtPriceX96. Store PendingPoolSetup. Emit PoolConfigStaged. Re-stageable until pool initialized.                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| setReactiveContract (Phase 3, onlyOwner) | Require pool initialized. \_reactiveSet guard: reverts ReactiveAlreadySet on second call. Rejects address(0). Sets reactiveContract[poolId], \_reactiveSet[poolId] = true. Emits ReactiveContractSet.                                                                                                                                                                                                                                                                                                                                                                             |
-| beforeInitialize                         | Validate key.fee == DYNAMIC_FEE_FLAG. Require pending setup exists (PoolNotStaged). Validate sender == authorizedInitializer (UnauthorizedInitializer). Validate sqrtPriceX96 == expectedSqrtPriceX96 (UnexpectedSqrtPrice). Commit poolConfig from pending setup. Delete \_pendingSetup. Set \_poolInitialized = true. Emit PoolConfigInitialized. Note: reactiveContract is NOT set here.                                                                                                                                                                                       |
-| afterAddLiquidity                        | Derive entryAmt0, entryAmt1 from liquidity delta. Compute entryNotionalStable. Register PositionState (active=true). Call \_accrue() --- dt=0, initializes lastAccrualTime. Emit PositionRegistered.                                                                                                                                                                                                                                                                                                                                                                              |
-| beforeSwap                               | Return dynamic fee = baseLpFeeBps + bufferBps. No position state touched.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| afterSwap                                | Compute buffer contribution from swap fee. Update bufferBalanceStable. Emit BufferFunded. Emit TickUpdated (for Reactive Network). NO position accrual --- cannot iterate positions.                                                                                                                                                                                                                                                                                                                                                                                              |
-| beforeRemoveLiquidity                    | Validation only. Derive positionKey. Require position is active (revert PositionNotActive). Enforce MVP full-withdrawal only: require uint128(-params.liquidityDelta) == pos.liquidity (revert PartialWithdrawalNotSupported). No minHoldSeconds check. No accrual, IL, or payout computation. Return selector.AccrualUpdated.                                                                                                                                                                                                                                                    |
-| afterRemoveLiquidity                     | All settlement logic. Extract outAmt0/outAmt1 from BalanceDelta (fees included per IL spec). Check minHoldSeconds HARD GATE: if not met, emit IneligibleClaim, cleanup PositionState, return. Get exitTick from getSlot0. Call \_accrue() — final accrual. Call \_computeIL(pos, outAmt0, outAmt1, exitTick). Call \_computePayout(). Strict CEI: clear PositionState (active=false) and update buffer BEFORE transfer. Transfer USDC payout to LP. Emit ClaimSettled (IL_CAP, payout>0), PartialPayout (COVERAGE_CAP/BUFFER_CAP or payout==0 with IL>0), or NoClaim (IL_raw==0). |
+| Callback                             | Responsibility                                                                                                                                                   |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| stagePoolConfig (Phase 1, onlyOwner) | Validate all PoolConfig bounds, authorizedInitializer, expectedSqrtPriceX96. Store PendingPoolSetup. Emit PoolConfigStaged. Re-stageable until pool initialized. |
+
+|
+| beforeInitialize | Validate key.fee == DYNAMIC_FEE_FLAG. Require pending setup exists (PoolNotStaged). Validate sender == authorizedInitializer (UnauthorizedInitializer). Validate sqrtPriceX96 == expectedSqrtPriceX96 (UnexpectedSqrtPrice). Commit poolConfig from pending setup. Delete \_pendingSetup. Set \_poolInitialized = true. Emit PoolConfigInitialized. |
+| afterAddLiquidity | Derive entryAmt0, entryAmt1 from liquidity delta. Compute entryNotionalStable. Register PositionState (active=true). Call \_accrue() --- dt=0, initializes lastAccrualTime. Emit PositionRegistered. |
+| beforeSwap | Return dynamic fee = baseLpFeeBps + bufferBps. No position state touched. |
+| afterSwap | Compute buffer contribution from swap fee. Update bufferBalanceStable. Emit BufferFunded. Emit TickUpdated (for Reactive Network). NO position accrual --- cannot iterate positions. |
+| beforeRemoveLiquidity | Validation only. Derive positionKey. Require position is active (revert PositionNotActive). Enforce MVP full-withdrawal only: require uint128(-params.liquidityDelta) == pos.liquidity (revert PartialWithdrawalNotSupported). No minHoldSeconds check. No accrual, IL, or payout computation. Return selector.AccrualUpdated. |
+| afterRemoveLiquidity | All settlement logic. Extract outAmt0/outAmt1 from BalanceDelta (fees included per IL spec). Check minHoldSeconds HARD GATE: if not met, emit IneligibleClaim, cleanup PositionState, return. Get exitTick from getSlot0. Call \_accrue() — final accrual. Call \_computeIL(pos, outAmt0, outAmt1, exitTick). Call \_computePayout(). Strict CEI: clear PositionState (active=false) and update buffer BEFORE transfer. Transfer USDC payout to LP. Emit ClaimSettled (IL_CAP, payout>0), PartialPayout (COVERAGE_CAP/BUFFER_CAP or payout==0 with IL>0), or NoClaim (IL_raw==0). emit PositionClosed|
 
 ## 7. Core Internal Functions
 
@@ -453,80 +429,318 @@ function _computePayout(
 
 ## 8. Checkpoint & Reactive Network
 
-### checkpoint() Function
+### AbstractCallback Inheritance
+
+`RangeGuardHook` inherits from both `BaseHook` (Uniswap v4) and `AbstractCallback`
+(Reactive Network's `reactive-lib`). `AbstractCallback` provides the `authorizedSenderOnly`
+modifier, which verifies that `msg.sender` equals the Reactive Network's official
+Callback Proxy — the on-chain gateway through which all Reactive contract callbacks
+are routed on the host chain.
+
+```solidity
+import {AbstractCallback} from "reactive-lib/src/abstract-base/AbstractCallback.sol";
+
+contract RangeGuardHook is BaseHook, AbstractCallback {
+    constructor(
+        IPoolManager _manager,
+        address      _owner,
+        address      _callbackSender    // Reactive Network Callback Proxy
+    )
+        BaseHook(_manager)
+        AbstractCallback(_callbackSender)
+    {
+        owner = _owner;
+    }
+}
+```
+
+**Callback Proxy address (all testnets):** `0x0000000000000000000000000000000000fffFfF`
+
+Passed as `_callbackSender` in the deploy script. The hook cannot verify WHICH specific
+Reactive contract triggered a callback — it can only verify the callback arrived through
+the official Reactive Network infrastructure. This is acceptable: the reactive-callable
+functions can only accrue and emit events; they cannot move funds or corrupt accounting.
+
+**Minimum callback gas limit:** 100,000 gas per request (enforced by Reactive Network).
+RangeGuard uses 300,000 per callback to accommodate `_accrue` + event emission.
+
+---
+
+### RVM ID Placeholder Rule (Critical)
+
+The Reactive Network overwrites the **first 160 bits** of every callback payload with
+the calling Reactive contract's ReactVM ID. Therefore every hook function callable from
+a Reactive contract **must accept a leading `address` parameter** (typically named
+`sender` and ignored). Callback payloads must place `address(0)` in this first position.
+
+```solidity
+// Correct payload encoding in Reactive contract:
+bytes memory payload = abi.encodeWithSignature(
+    "checkpointCallback(address,bytes32,bytes32)",
+    address(0),   // ← RVM ID placeholder — network overwrites this
+    poolId,
+    positionKey
+);
+```
+
+All three hook functions callable by the Reactive contract follow this pattern.
+
+---
+
+### checkpoint() Function — Permissionless
 
 ```solidity
 /// @notice Permissionless accrual update for a single position.
-/// @dev Primary entry point for Reactive Network automation.
-function checkpoint(
-    PoolId  poolId,
-    bytes32 positionKey
-) external {
+/// @dev For direct callers (keepers, LPs, manual). Rate-limited by minCheckpointInterval.
+///      Does NOT include the RVM ID sender parameter — use checkpointCallback() for
+///      Reactive Network heartbeat calls.
+function checkpoint(PoolId poolId, bytes32 positionKey) external {
+    if (!_poolInitialized[poolId])                                    revert PoolNotInitialized();
     PositionState storage pos = positions[poolId][positionKey];
     PoolConfig    storage cfg = poolConfig[poolId];
-
-    require(pos.active, "position not active");
-    require(
-        block.timestamp - pos.lastAccrualTime >= cfg.minCheckpointInterval,
-        "TOO_SOON"
-    );
-
+    if (!pos.active)                                                  revert PositionNotActive();
+    if (block.timestamp - pos.lastAccrualTime < cfg.minCheckpointInterval)
+                                                                      revert CheckpointTooSoon();
     int24 currentTick = _getCurrentTick(poolId);
     _accrue(poolId, positionKey, currentTick);
-
     emit Checkpointed(poolId, positionKey, block.timestamp);
 }
 ```
 
-### Reactive Contract --- Two Jobs
-
-**Job 1: Range Transition Detection (event-driven)**
-
-- Subscribes to TickUpdated events emitted by the hook in afterSwap
-- Tracks lastKnownRangeStatus per position in Reactive Contract state
-- On tick crossing:
-  - If wasInRange && !isInRange: call checkpoint() -> hook calls emitOutOfRange()
-  - If !wasInRange && isInRange: call checkpoint() -> hook calls emitBackInRange()
-
-**Job 2: Periodic Heartbeat (time-driven)**
-
-- Calls checkpoint() every checkpointInterval for each active in-range position
-- Generates intermediate AccrualUpdated events for the coverage report
-- Mainnet: every 24 hours | Demo/testnet: every 2 minutes
-
-### Hook Functions Callable by Reactive Contract Only
+### checkpointCallback() — Reactive Network Heartbeat Entry Point
 
 ```solidity
-/// @dev Access controlled: only reactiveContract[poolId] may call
-function emitOutOfRange(
-    PoolId  poolId,
-    bytes32 positionKey,
-    int24   currentTick
-) external onlyReactive(poolId) {
+/// @notice Reactive Network heartbeat entry point. Wraps checkpoint() with the
+///         required RVM ID sender placeholder as the first parameter.
+/// @dev  The sender arg is the ReactVM
+///      contract ID injected by the network — it is not validated and is ignored.
+///      onlu called by reactive network
+function checkpointCallback(
+    address /* sender */,       // RVM ID placeholder — ignored
+    PoolId   poolId,
+    bytes32  positionKey
+) external authorizedSenderOnly {
+    if (!_poolInitialized[poolId])                                    revert PoolNotInitialized();
     PositionState storage pos = positions[poolId][positionKey];
-    emit PositionOutOfRange(
-        poolId, positionKey, pos.tickLower, pos.tickUpper,
-        currentTick, pos.earnedCoverageStable, block.timestamp
-    );
+    PoolConfig    storage cfg = poolConfig[poolId];
+    if (!pos.active)                                                  revert PositionNotActive();
+    if (block.timestamp - pos.lastAccrualTime < cfg.minCheckpointInterval)
+                                                                      revert CheckpointTooSoon();
+    int24 currentTick = _getCurrentTick(poolId);
+    _accrue(poolId, positionKey, currentTick);
+    emit Checkpointed(poolId, positionKey, block.timestamp);
 }
+```
 
-function emitBackInRange(
+---
+
+### Range Transition Functions (authorizedSenderOnly, atomic)
+
+Each combines accrual + range event emission atomically. The leading `address sender`
+parameter is the RVM ID placeholder required by the Reactive Network. The hook maintains
+`_lastRangeEventInRange` to enforce correct event alternation.
+
+**Range event guard state:**
+
+```solidity
+/// @dev Prevents duplicate consecutive range events per position.
+///      Initialized in afterAddLiquidity based on entry tick vs tick range.
+mapping(PoolId => mapping(bytes32 => bool)) private _lastRangeEventInRange;
+```
+
+Initialized in `afterAddLiquidity`:
+
+```solidity
+_lastRangeEventInRange[poolId][positionKey] =
+    (entryTick >= pos.tickLower && entryTick < pos.tickUpper);
+```
+
+**checkpointAndEmitOutOfRange:**
+
+```solidity
+/// @notice Called by Reactive contract on out-of-range transition detection.
+/// @dev authorizedSenderOnly. Not rate-limited. Atomic: accrue + PositionOutOfRange.
+///      First param is RVM ID placeholder (required by Reactive Network, ignored).
+function checkpointAndEmitOutOfRange(
+    address /* sender */,       // RVM ID placeholder — ignored
     PoolId  poolId,
-    bytes32 positionKey,
-    int24   currentTick
-) external onlyReactive(poolId) {
+    bytes32 positionKey
+) external authorizedSenderOnly {
     PositionState storage pos = positions[poolId][positionKey];
-    emit PositionBackInRange(
-        poolId, positionKey, pos.tickLower, pos.tickUpper,
+    if (!pos.active)                                        revert PositionNotActive();
+    if (!_lastRangeEventInRange[poolId][positionKey])       revert PositionAlreadyOutOfRange();
+
+    int24 currentTick = _getCurrentTick(poolId);
+    _accrue(poolId, positionKey, currentTick);
+    _lastRangeEventInRange[poolId][positionKey] = false;
+
+    emit PositionOutOfRange(
+        poolId, positionKey,
+        pos.tickLower, pos.tickUpper,
         currentTick, pos.earnedCoverageStable, block.timestamp
     );
 }
 ```
 
-`reactiveContract[poolId]` is set per pool via `setReactiveContract()` (Phase 3 of pool setup),
-after the reactive contract has been deployed with the hook address. The `_reactiveSet[poolId]`
-guard ensures this can never be changed after initial registration. All `onlyReactive(poolId)`
-access control depends on this mapping being set before any reactive callbacks fire.
+**checkpointAndEmitBackInRange:**
+
+```solidity
+/// @notice Called by Reactive contract on back-in-range transition detection.
+/// @dev authorizedSenderOnly. Not rate-limited. Atomic: accrue + PositionBackInRange.
+///      First param is RVM ID placeholder (required by Reactive Network, ignored).
+function checkpointAndEmitBackInRange(
+    address /* sender */,       // RVM ID placeholder — ignored
+    PoolId  poolId,
+    bytes32 positionKey
+) external authorizedSenderOnly {
+    PositionState storage pos = positions[poolId][positionKey];
+    if (!pos.active)                                         revert PositionNotActive();
+    if (_lastRangeEventInRange[poolId][positionKey])         revert PositionAlreadyInRange();
+
+    int24 currentTick = _getCurrentTick(poolId);
+    _accrue(poolId, positionKey, currentTick);
+    _lastRangeEventInRange[poolId][positionKey] = true;
+
+    emit PositionBackInRange(
+        poolId, positionKey,
+        pos.tickLower, pos.tickUpper,
+        currentTick, pos.earnedCoverageStable, block.timestamp
+    );
+}
+```
+
+**New errors:**
+
+```solidity
+error PositionAlreadyOutOfRange();
+error PositionAlreadyInRange();
+```
+
+---
+
+### PositionClosed Event
+
+```solidity
+/// @notice Emitted on every settlement path in afterRemoveLiquidity.
+/// @dev Minimal lifecycle signal for Reactive Network automation — stop tracking.
+///      Correlate with ClaimSettled/NoClaim/IneligibleClaim/PartialPayout (same tx).
+event PositionClosed(
+    PoolId  indexed poolId,
+    bytes32 indexed positionKey,
+    address         owner
+);
+```
+
+---
+
+### Reactive Contract — Event Subscriptions
+
+The Reactive contract subscribes to four sources:
+
+```
+// Hook events (host chain — Sepolia/Unichain):
+PositionRegistered  → add position to tracking, init lastKnownRangeStatus
+TickUpdated         → range transition detection
+PositionClosed      → remove position from tracking, stop heartbeat
+
+// Cron system (ReactVM chain):
+Cron10              → heartbeat trigger (~1 min); check lastCheckpointTime before firing
+```
+
+### Reactive Contract — Two Jobs
+
+**Job 1: Range Transition Detection (event-driven)**
+
+On `PositionRegistered`: add position to internal tracking map, initialize
+`lastKnownRangeStatus[positionKey]` from entry tick vs tick range.
+
+On `TickUpdated`: evaluate tracked positions against new tick, detect transitions:
+
+```solidity
+bytes memory payload = abi.encodeWithSignature(
+    "checkpointAndEmitOutOfRange(address,bytes32,bytes32)",
+    address(0),    // RVM ID placeholder
+    pos.poolId,
+    positionKey
+);
+emit Callback(SEPOLIA_CHAIN_ID, hookAddress, 300_000, payload);
+```
+
+On `PositionClosed`: remove position from tracking and heartbeat schedule.
+
+The hook's `_lastRangeEventInRange` guard provides a second layer of protection
+against duplicate events if Reactive contract state is stale or restarted.
+
+**Job 2: Periodic Heartbeat (time-driven)**
+
+On `Cron10` (~1 min): iterate active positions, emit one `Callback` per position
+that has exceeded `minCheckpointInterval`:
+
+```solidity
+for (uint256 i = 0; i < activeKeys.length && i < MAX_POSITIONS_PER_CYCLE; i++) {
+    PositionInfo memory pos = positions[activeKeys[i]];
+    if (!pos.active) continue;
+    if (block.timestamp - pos.lastCheckpointTime < minInterval) continue;
+
+    bytes memory payload = abi.encodeWithSignature(
+        "checkpointCallback(address,bytes32,bytes32)",
+        address(0),         // RVM ID placeholder
+        pos.poolId,
+        activeKeys[i]
+    );
+    emit Callback(SEPOLIA_CHAIN_ID, hookAddress, 300_000, payload);
+}
+
+uint256 private constant MAX_POSITIONS_PER_CYCLE = 20;
+```
+
+**Gas note:** Each `Callback` emit costs 100,000 rGas minimum on the Reactive Network.
+20 positions × 300,000 = 6,000,000 rGas per heartbeat cycle. Ensure the Reactive
+contract's rGas balance is funded accordingly for the demo.
+
+**Production upgrade path:** If position count exceeds 20, migrate to Pattern A
+(single Callback to a permissionless batch contract on Sepolia that iterates positions
+locally). `checkpoint()` is permissionless so no hook changes are required.
+
+---
+
+### Function Summary
+
+| Function                         | Caller                 | Rate-limited | Sender param | Emits                                    |
+| -------------------------------- | ---------------------- | ------------ | ------------ | ---------------------------------------- |
+| `checkpoint()`                   | Anyone                 | Yes          | No           | `AccrualUpdated` + `Checkpointed`        |
+| `checkpointCallback()`           | authorizedSenderOnly   | Yes          | Yes (RVM ID) | `AccrualUpdated` + `Checkpointed`        |
+| `checkpointAndEmitOutOfRange()`  | `authorizedSenderOnly` | No           | Yes (RVM ID) | `AccrualUpdated` + `PositionOutOfRange`  |
+| `checkpointAndEmitBackInRange()` | `authorizedSenderOnly` | No           | Yes (RVM ID) | `AccrualUpdated` + `PositionBackInRange` |
+
+---
+
+### Known Limitations (Lazy Accrual at Transitions)
+
+Due to lazy accrual, transition functions evaluate the **current** tick at call time.
+Maximum accrual error per transition = one `minCheckpointInterval` (2 min demo).
+
+**Edge cases (MVP demo: won't occur; production: accepted):**
+
+- Tick bounces before call lands: `_lastRangeEventInRange` guard prevents misleading events
+- If guard reverts, Reactive contract updates its state and does not retry
+
+**Production mitigation:** reduce `minCheckpointInterval` or pass tick-at-crossing as
+a parameter from the Reactive contract.
+
+---
+
+### Deployment Note
+
+The pool setup sequence is two phases only — `setReactiveContract()` is not needed.
+Security is provided by `AbstractCallback` (`authorizedSenderOnly` modifier):
+
+```
+Phase 1: stagePoolConfig()       — owner, before PoolManager.initialize()
+Phase 2: _beforeInitialize()     — PoolManager callback, commits staged config
+(then):  seedBuffer()            — admin, funds real token1 custody
+(then):  deploy Reactive contract — pass hookAddress; begins subscriptions
+```
 
 ## 9. LimitingFactor Enum
 
@@ -551,19 +765,19 @@ LimitingFactor is included in:
 | --------------------- | ------------------------------------------ | --------------------------------------------------------------------------------- |
 | PoolConfigStaged      | stagePoolConfig() --- Phase 1              | poolId, config, authorizedInitializer, expectedSqrtPriceX96                       |
 | PoolConfigInitialized | \_beforeInitialize() on commit --- Phase 2 | poolId, config (reactive not included)                                            |
-| ReactiveContractSet   | setReactiveContract() --- Phase 3          | poolId, reactive address                                                          |
 | PositionRegistered    | afterAddLiquidity                          | owner, range, entryNotional, depositTime, coverageApr, dayCountBasis              |
 | AccrualUpdated        | \_accrue() --- every call                  | positionKey, dt, delta, newEarnedTotal, isInRange, timestamp                      |
 | TickUpdated           | afterSwap --- every swap                   | poolId, newTick, timestamp (lightweight, for Reactive)                            |
-| PositionOutOfRange    | emitOutOfRange() via Reactive              | positionKey, tickLower, tickUpper, currentTick, earnedCoverageAtPause, timestamp  |
-| PositionBackInRange   | emitBackInRange() via Reactive             | positionKey, tickLower, tickUpper, currentTick, earnedCoverageAtResume, timestamp |
+| PositionOutOfRange    | checkpointAndEmitOutOfRange                | positionKey, tickLower, tickUpper, currentTick, earnedCoverageAtPause, timestamp  |
+| PositionBackInRange   | checkpointAndEmitBackInRange()             | positionKey, tickLower, tickUpper, currentTick, earnedCoverageAtResume, timestamp |
 | BufferFunded          | afterSwap                                  | swapAmount, bufferContribution, newBufferBalance                                  |
 | BufferSeeded          | seedBuffer()                               | poolId, amount, newBalance                                                        |
 | ClaimSettled          | afterRemoveLiquidity (payout > 0)          | owner, range, IL_raw, earnedCoverage, payout, limitingFactor                      |
 | NoClaim               | afterRemoveLiquidity (IL = 0)              | owner, range, V_HODL, V_actual                                                    |
 | IneligibleClaim       | afterRemoveLiquidity (minHold not met)     | owner, range, reason                                                              |
 | PartialPayout         | afterRemoveLiquidity (buffer insufficient) | owner, range, requested, actual                                                   |
-| Checkpointed          | checkpoint()                               | poolId, positionKey, timestamp                                                    |
+| Checkpointed          | checkpoint() / checkpointCallback()        | poolId, positionKey, timestamp                                                    |
+| PositionClosed        | afterRemoveLiquidity                       | poolId, positionKey, owner                                                        |
 
 ## 11. View Function Inventory
 
@@ -591,9 +805,7 @@ LimitingFactor is included in:
 ## 12. Safety & Governance
 
 - All PoolConfig fields are immutable after \_beforeInitialize() commits the staged config
-- reactiveContract[poolId] is set exactly once by setReactiveContract(); \_reactiveSet guard permanently prevents any change after initial registration
 - \_poolInitialized guard prevents pool re-initialization
-- \_reactiveSet guard prevents reactive contract from being changed after initial registration
 - \_pendingSetup staging pattern prevents pool initialization with wrong price or unauthorized caller
 - Hard bounds enforced at stagePoolConfig() time for all parameters
 - Single admin per pool for MVP (multisig or DAO recommended for mainnet)
@@ -601,11 +813,8 @@ LimitingFactor is included in:
 - dynamicFeeBps always derived --- never stored, preventing fee drift
 - secondsPerYear validated to only accept A/365F or A/360
 - Reentrancy: position state cleared before payout transfer in afterRemoveLiquidity
-- Post-init privileged actions: setReactiveContract() (owner, one-time), then seedBuffer() (admin)
 
 ## 13. MVP Scope
-
-**Deployment note:** MVP uses a three-phase sequential pool setup (stagePoolConfig -> PoolManager.initialize -> setReactiveContract) to resolve the circular deployment dependency between the hook and reactive contract. Production deployments use CREATE2 for atomic, same-transaction deployment of both contracts, eliminating the intermediate window where the pool is initialized but the reactive contract is not yet registered.
 
 In scope:
 
@@ -655,7 +864,7 @@ Out of scope (Phase 2):
 
 ### Demo Script Narrative Arc (vm.warp in Foundry)
 
-[Setup] Deploy hook, stage ETH/USDC pool config (stagePoolConfig), initialize pool, deploy reactive contract, register reactive (setReactiveContract)
+[Setup] Deploy hook, stage ETH/USDC pool config (stagePoolConfig), initialize pool
 [Setup] Admin seeds buffer: 10,000 USDC -> BufferSeeded
 Buffer health: 10,000 / 10,000 USDC (100.0%)
 
@@ -711,8 +920,10 @@ Buffer balance: 10,176.75 USDC (101.8% health --- self-sustaining)
 1. \_accrue() --- accrual engine (lazy, in-range gated, A/365F)
 2. \_computeIL() --- spot price IL calculation with decimal adjustment
 3. \_computePayout() --- three-cap logic + LimitingFactor determination
-4. Hook callbacks --- stagePoolConfig, \_beforeInitialize, setReactiveContract, afterAddLiquidity, beforeSwap, afterSwap, beforeRemoveLiquidity, afterRemoveLiquidity
-5. checkpoint() --- permissionless + Reactive Network entry point
+4. Hook callbacks --- stagePoolConfig, \_beforeInitialize, afterAddLiquidity, beforeSwap, afterSwap, beforeRemoveLiquidity, afterRemoveLiquidity
+5. checkpoint() + checkpointCallback() + checkpointAndEmitOutOfRange() +
+   checkpointAndEmitBackInRange() --- accrual drivers + Reactive Network
+   entry points (implemented in Reactive contract session)
 6. Reactive Contract --- range transition detection + periodic heartbeat
 7. Frontend dashboard --- coverage report rendered from on-chain events
 8. Demo script --- RangeGuardDemo.s.sol with vm.warp
