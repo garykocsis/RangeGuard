@@ -26,12 +26,12 @@ Completed:
 
 Next implementation target:
 
-- Reactive contract (onlyReactive + emitOutOfRange/emitBackInRange)
+- authorizedSenderOnly (AbstractCallback) + checkpointAndEmitOutOfRange/BackInRange
 
 Planned next steps:
 
-- Reactive contract ← current (onlyReactive guard on \_reactiveSet, emitOutOfRange/
-  emitBackInRange, subscribe to TickUpdated, drive checkpoint() on heartbeat + crossings)
+- Reactive contract ← current (AbstractCallback (authorizedSenderOnly), checkpointAndEmitOutOfRange/
+  checkpointAndEmitBackInRange, PositionClosed event, Cron10 heartbeat, subscribe to TickUpdated, drive checkpoint() on heartbeat + crossings)
 - Doc-fix pass (reconcile invariant-mapping.md / state-machine.md / spec.md §6–§8 with the
   v4-native settlement model + the \_getCurrentTick helper)
 - Frontend dashboard
@@ -240,8 +240,8 @@ address immutable owner
 mapping(PoolId => PendingPoolSetup)                   _pendingSetup   // transient; deleted on commit
 mapping(PoolId => PoolConfig)                          poolConfig      // live after Phase 2
 mapping(PoolId => bool)                                _poolInitialized
-mapping(PoolId => address)                             reactiveContract // live after Phase 3
-mapping(PoolId => bool)                                _reactiveSet    // one-time guard
+
+
 
 // Pool and position state
 mapping(PoolId => PoolState)                           poolState
@@ -300,12 +300,7 @@ beforeInitialize (Phase 2 --- callback, PoolManager-only):
 - validates sender == authorizedInitializer (revert UnauthorizedInitializer)
 - validates sqrtPriceX96 == expectedSqrtPriceX96 (revert UnexpectedSqrtPrice)
 - commits PoolConfig atomically; deletes pending setup; marks pool initialized
-- reactiveContract NOT set here --- see Phase 3
 - emits PoolConfigInitialized
-
-- one-time only: \_reactiveSet guard reverts ReactiveAlreadySet on second call
-- sets reactiveContract[poolId]; sets \_reactiveSet[poolId] = true
-- emits ReactiveContractSet
 
 afterAddLiquidity:
 
@@ -387,6 +382,29 @@ Job 1 - Range transition detection (event-driven):
 - Subscribe to PositionRegistered → add position to tracking,
   init lastKnownRangeStatus
 - Subscribe to TickUpdated → detect range crossings:
+  ````if wasInRange && !isInRange:
+   call checkpointAndEmitOutOfRange(address(0), poolId, positionKey)```
+  > hook: atomic accrue + PositionOutOfRange
+  ```if !wasInRange && isInRange:
+  call checkpointAndEmitBackInRange(address(0), poolId, positionKey)```
+  -> hook: atomic accrue + PositionBackInRange
+  ````
+- Subscribe to PositionClosed → remove position from tracking, stop heartbeat
+
+Job 2 - Periodic heartbeat (time-driven):
+
+- Subscribe to Cron10 (~1 min) on ReactVM system contract
+- Call checkpointCallback(address(0), poolId, positionKey) for each active
+  tracked position that has exceeded minCheckpointInterval
+- Track lastCheckpointTime per position to avoid CheckpointTooSoon waste
+
+Hook functions callable by Reactive Network only (authorizedSenderOnly via AbstractCallback):
+
+checkpointCallback(address, PoolId, bytes32 positionKey)
+checkpointAndEmitOutOfRange(address, PoolId, bytes32 positionKey)
+checkpointAndEmitBackInRange(address, PoolId, bytes32 positionKey)
+(access controlled: authorizedSenderOnly — Callback Proxy
+0x0000000000000000000000000000000000fffFfF)
 
 ## 12. View Functions (Final)
 

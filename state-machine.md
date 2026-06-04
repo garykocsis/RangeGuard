@@ -171,7 +171,11 @@ checkpoint() while out of range:
   OutOfRangePaused  → OutOfRangePaused
 
 Reactive range re-entry:
-  OutOfRangePaused → InRangeAccruing
+  checkpointAndEmitOutOfRange() (Reactive-triggered):
+   InRangeAccruing   → OutOfRangePaused
+
+checkpointAndEmitBackInRange() (Reactive-triggered):
+  OutOfRangePaused  → InRangeAccruing
 
 beforeRemoveLiquidity (validation only — no state transition):
   Validates: active position + full-withdrawal only
@@ -200,7 +204,7 @@ Hook contract owns:
 
 - accounting state
 - accrual state
-- pool setup state (`_pendingSetup`, `_poolInitialized`, `_reactiveSet`)
+- pool setup state (`_pendingSetup`, `_poolInitialized`)
 
 Reactive contract owns:
 

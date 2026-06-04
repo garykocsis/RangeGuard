@@ -88,24 +88,28 @@ preserve these invariants under all valid execution paths.
 
 # Authorization Invariants
 
-- `onlyReactive(poolId)` may emit range transition events
+- `authorizedSenderOnly` (AbstractCallback Callback Proxy) may call
+  checkpointAndEmitOutOfRange() and checkpointAndEmitBackInRange()
 - Reactive contracts must never directly mutate accounting state
 - only `config.admin` (per-pool) may call `seedBuffer()`
 - only `owner` (contract-level) may call `stagePoolConfig()`
 - only the `authorizedInitializer` designated at staging may trigger the
   `_beforeInitialize` commit by calling `PoolManager.initialize()`
-  guard permanently prevents any subsequent change to `reactiveContract[poolId]`
 - `PoolConfig` parameters must remain immutable after initialization
 - `dynamicFeeBps` must always be derived and never independently stored
 - unauthorized actors must never trigger payout execution
 - unauthorized actors must never mutate position settlement state
 - unauthorized actors must never mutate buffer accounting state
+- - `_lastRangeEventInRange[poolId][positionKey]` must alternate correctly —
+    `checkpointAndEmitOutOfRange` requires it is true;
+    `checkpointAndEmitBackInRange` requires it is false
+- `PositionClosed` must be emitted on every settlement path in afterRemoveLiquidity
 
 ---
 
 # Pool Setup Invariants
 
-These invariants govern the three-phase pool initialization sequence.
+These invariants govern the two-phase pool initialization sequence.
 
 ## Staging invariants (Phase 1)
 

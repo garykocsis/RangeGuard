@@ -70,7 +70,7 @@ Upcoming implementation order:
 
 Pool setup (two-phase pattern — mandatory):
 
-- pool setup follows three ordered phases:
+- pool setup follows two ordered phases:
   Phase 1: stagePoolConfig() — onlyOwner, called before PoolManager.initialize()
   Phase 2: \_beforeInitialize() — PoolManager callback, commits staged config atomically
 - stagePoolConfig() is external and onlyOwner (NOT internal-only)
@@ -245,6 +245,9 @@ Never:
 - treat stagePoolConfig() as internal-only (it is external, onlyOwner)
 - allow PoolManager.initialize() to succeed without a staged config
 - allow PoolManager.initialize() from an unauthorized caller or with wrong sqrtPrice
+- omit leading address RVM ID placeholder on any Reactive-callable hook function
+- omit address(0) as first argument in any Reactive callback payload encoding
+- use onlyReactive(poolId) — use authorizedSenderOnly from AbstractCallback instead
 
 ---
 
@@ -293,7 +296,8 @@ Do not introduce architectural changes without updating:
 
 5. checkpoint() ✅ (permissionless accrual driver; Reactive entry point) + seedBuffer() ✅
    (admin-only real token1 custody) — both complete and tested.
-   Next: Reactive Network contract (onlyReactive + emitOutOfRange/emitBackInRange).
+   Next: Reactive Network contract (AbstractCallback + authorizedSenderOnly +
+   checkpointCallback/checkpointAndEmitOutOfRange/checkpointAndEmitBackInRange)
 
 6. Callback-specific tests
 
@@ -330,27 +334,57 @@ At the start of every session, Claude must:
 
 Last completed: checkpoint() + seedBuffer() (210 tests passing). See
 docs/session-9-checkpoint-seedBuffer-complete.md.
-Current target: Reactive Network contract — onlyReactive(poolId) guard (on \_reactiveSet[poolId]),
-emitOutOfRange / emitBackInRange, subscribe to TickUpdated, and drive checkpoint() on the periodic
-heartbeat + range-crossing triggers. Reactive contracts must never mutate accounting state.
-Next up: doc-fix pass (reconcile invariant-mapping.md / state-machine.md / spec.md §6–§8 with the
-v4-native settlement model + the \_getCurrentTick helper), then the frontend dashboard.
-Notes: checkpoint(poolId, positionKey) is permissionless and accrual-ONLY — no IL/payout/transfer.
-Gates: \_poolInitialized (PoolNotInitialized) -> pos.active (PositionNotActive) ->
-`block.timestamp - lastAccrualTime < minCheckpointInterval` (CheckpointTooSoon). Reads the live tick
-via the NEW private \_getCurrentTick(poolId) (the spec's \_getCurrentTick was never implemented; the
-three existing callbacks keep their inline getSlot0 reads), calls \_accrue, emits Checkpointed.
-Permissionless is safe because \_accrue is monotonic / range-gated / ceiling-capped and rate-limited.
-minCheckpointInterval has no staging lower bound; 0 is allowed and harmless (dt==0 -> zero delta).
-seedBuffer(key, amount) is admin-only (msg.sender == config.admin) REAL token1 custody. Order:
-\_poolInitialized (PoolNotInitialized) -> CallerNotAdmin -> ZeroAmount, then pull via
-IERC20Minimal(Currency.unwrap(key.currency1)).transferFrom (CurrencyLibrary has NO transferFrom —
-verified) with a checked bool (interaction before effects), then credit bufferBalanceStable ONLY
-(totalSkimmedStable is fee accounting, untouched), emit BufferSeeded. Admin must approve(hook,amount)
-first. Native token1 can't be seeded (no transferFrom) — out of MVP scope. This resolves the
-session-8 R2 carry-in: payouts now draw from REAL seeded custody (the new SeedBufferInvariant and
-integration test use real seeding, not a mint-to-hook stand-in). New errors: CheckpointTooSoon,
-CallerNotAdmin, ZeroAmount. New events: Checkpointed, BufferSeeded.
-Carry-ins: payout recipient = v4 sender (owner=sender MVP). Doc drift still deferred: spec.md §6–§8,
-invariant-mapping.md, and state-machine.md still narrate the old settlement flow / reference
-pendingPayout / PendingSettlement and the unimplemented \_getCurrentTick — fold into the doc-fix pass.
+Current target: Reactive Network contract. Two workstreams in this session:
+
+WORKSTREAM 1 — Hook changes (retrofit to existing RangeGuardHook.sol):
+
+- AbstractCallback inheritance: RangeGuardHook inherits BaseHook AND AbstractCallback
+- Constructor gains third arg: address \_callbackSender (Callback Proxy)
+  constructor(IPoolManager \_manager, address \_owner, address \_callbackSender)
+- Remove: reactiveContract[poolId] mapping, \_reactiveSet[poolId] mapping
+- Remove: any custom onlyReactive modifier — replaced by authorizedSenderOnly (AbstractCallback)
+- afterAddLiquidity: add \_lastRangeEventInRange[poolId][positionKey] initialization
+  (true if entryTick in range, false if not)
+- afterRemoveLiquidity: emit PositionClosed(poolId, positionKey, owner) on ALL settlement
+  paths (after ClaimSettled/NoClaim/IneligibleClaim/PartialPayout)
+- New functions:
+  checkpointCallback(address /_sender_/, PoolId, bytes32) — permissionless, same gates
+  as checkpoint(), RVM ID placeholder first arg
+  checkpointAndEmitOutOfRange(address /_sender_/, PoolId, bytes32) — authorizedSenderOnly,
+  not rate-limited, atomic: \_accrue + \_lastRangeEventInRange=false + PositionOutOfRange
+  guard: revert PositionAlreadyOutOfRange if \_lastRangeEventInRange already false
+  checkpointAndEmitBackInRange(address /_sender_/, PoolId, bytes32) — authorizedSenderOnly,
+  not rate-limited, atomic: \_accrue + \_lastRangeEventInRange=true + PositionBackInRange
+  guard: revert PositionAlreadyInRange if \_lastRangeEventInRange already true
+- New state: mapping(PoolId => mapping(bytes32 => bool)) private \_lastRangeEventInRange
+- New errors: PositionAlreadyOutOfRange, PositionAlreadyInRange
+- New event: PositionClosed(PoolId indexed, bytes32 indexed positionKey, address owner)
+
+WORKSTREAM 2 — RangeGuardReactive.sol (new contract, ReactVM chain):
+
+- Inherits: IReactive, AbstractPausableReactive
+- Constructor args: address \_owner, address \_hookAddress, uint256 \_cronTopic
+- Subscriptions in constructor (inside if (!vm)):
+  service.subscribe(SEPOLIA_CHAIN_ID, hookAddress, POSITION_REGISTERED_TOPIC_0, ...)
+  service.subscribe(SEPOLIA_CHAIN_ID, hookAddress, TICK_UPDATED_TOPIC_0, ...)
+  service.subscribe(SEPOLIA_CHAIN_ID, hookAddress, POSITION_CLOSED_TOPIC_0, ...)
+  service.subscribe(block.chainid, address(service), cronTopic, ...)
+- State: mapping(bytes32 => PositionInfo) positions, bytes32[] activeKeys
+  struct PositionInfo { PoolId poolId; int24 tickLower; int24 tickUpper;
+  bool lastKnownInRange; bool active; uint256 lastCheckpointTime; }
+- react(LogRecord calldata log) external vmOnly — routes to four handlers
+- Cron10 handler: iterate activeKeys (cap MAX_POSITIONS_PER_CYCLE=20), emit
+  Callback per position exceeding minCheckpointInterval
+- TickUpdated handler: detect range transitions, emit Callback for
+  checkpointAndEmitOutOfRange or checkpointAndEmitBackInRange
+- PositionRegistered handler: add to tracking, init lastKnownRangeStatus
+- PositionClosed handler: remove from tracking
+- CALLBACK_GAS_LIMIT = 300_000; MAX_POSITIONS_PER_CYCLE = 20
+- RVM ID placeholder RULE (CRITICAL): address(0) MUST be first arg in every
+  abi.encodeWithSignature payload — network overwrites it with ReactVM contract ID
+
+Next up: Frontend dashboard, then demo script.
+Notes: Doc-fix pass complete — all docs reconciled with final Reactive design.
+Carry-ins: payout recipient = v4 sender (owner=sender MVP).
+checkpoint/seedBuffer implementation details preserved from session 9 — see
+docs/session-9-checkpoint-seedBuffer-complete.md for full carry-in context.

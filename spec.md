@@ -95,17 +95,14 @@ Every line in the coverage report maps to a real on-chain event:
 ### Pillar 5: Pool Parameterization
 
 - PoolConfig fields are immutable after pool initialization --- hard bounds enforced at stagePoolConfig() time
-- reactiveContract[poolId] is set exactly once via setReactiveContract() after pool initialization --- \_reactiveSet guard permanently prevents any subsequent change
 - Pool bring-up uses a three-phase setup sequence (see Section 4):
   - Phase 1 --- stagePoolConfig(): owner stages config before pool exists in PoolManager
   - Phase 2 --- \_beforeInitialize(): commits staged config atomically when pool is initialized
-  - Phase 3 --- setReactiveContract(): owner registers reactive contract address after its deployment
+
 - Hard bounds enforced at stagePoolConfig() time --- bad configs revert before pool is ever created
 - dynamicFeeBps is always derived (baseLpFeeBps + bufferBps) --- never stored separately, preventing drift
-- Post-init privileged actions (two, ordered):
-  1. setReactiveContract() --- onlyOwner, one-time only, called after reactive contract is deployed
-  2. seedBuffer() --- config.admin only, funds the IL coverage buffer
-- Production deployments use CREATE2 for atomic hook + reactive deployment (no three-phase gap). MVP uses sequential deployment for simplicity; \_reactiveSet guard preserves trustlessness after setup.
+- Post-init privileged actions :
+  1. seedBuffer() --- config.admin only, funds the IL coverage buffer
 
 ## 4. PoolConfig Struct (Immutable)
 
@@ -258,7 +255,7 @@ error UnsupportedDayCount();
 ### Hook-Level Mappings
 
 ```solidity
-// Protocol owner --- gates stagePoolConfig() and setReactiveContract()
+// Protocol owner --- gates stagePoolConfig()
 address public immutable owner;
 
 // Pool setup
@@ -767,19 +764,18 @@ LimitingFactor is included in:
 | --------------------- | ------------------------------------------ | --------------------------------------------------------------------------------- |
 | PoolConfigStaged      | stagePoolConfig() --- Phase 1              | poolId, config, authorizedInitializer, expectedSqrtPriceX96                       |
 | PoolConfigInitialized | \_beforeInitialize() on commit --- Phase 2 | poolId, config (reactive not included)                                            |
-| ReactiveContractSet   | setReactiveContract() --- Phase 3          | poolId, reactive address                                                          |
 | PositionRegistered    | afterAddLiquidity                          | owner, range, entryNotional, depositTime, coverageApr, dayCountBasis              |
 | AccrualUpdated        | \_accrue() --- every call                  | positionKey, dt, delta, newEarnedTotal, isInRange, timestamp                      |
 | TickUpdated           | afterSwap --- every swap                   | poolId, newTick, timestamp (lightweight, for Reactive)                            |
-| PositionOutOfRange    | emitOutOfRange() via Reactive              | positionKey, tickLower, tickUpper, currentTick, earnedCoverageAtPause, timestamp  |
-| PositionBackInRange   | emitBackInRange() via Reactive             | positionKey, tickLower, tickUpper, currentTick, earnedCoverageAtResume, timestamp |
+| PositionOutOfRange    | checkpointAndEmitOutOfRange                | positionKey, tickLower, tickUpper, currentTick, earnedCoverageAtPause, timestamp  |
+| PositionBackInRange   | checkpointAndEmitBackInRange()             | positionKey, tickLower, tickUpper, currentTick, earnedCoverageAtResume, timestamp |
 | BufferFunded          | afterSwap                                  | swapAmount, bufferContribution, newBufferBalance                                  |
 | BufferSeeded          | seedBuffer()                               | poolId, amount, newBalance                                                        |
 | ClaimSettled          | afterRemoveLiquidity (payout > 0)          | owner, range, IL_raw, earnedCoverage, payout, limitingFactor                      |
 | NoClaim               | afterRemoveLiquidity (IL = 0)              | owner, range, V_HODL, V_actual                                                    |
 | IneligibleClaim       | afterRemoveLiquidity (minHold not met)     | owner, range, reason                                                              |
 | PartialPayout         | afterRemoveLiquidity (buffer insufficient) | owner, range, requested, actual                                                   |
-| Checkpointed          | checkpoint()                               | poolId, positionKey, timestamp                                                    |
+| Checkpointed          | checkpoint() / checkpointCallback()        | poolId, positionKey, timestamp                                                    |
 | PositionClosed        | afterRemoveLiquidity                       | poolId, positionKey, owner                                                        |
 
 ## 11. View Function Inventory
@@ -923,8 +919,10 @@ Buffer balance: 10,176.75 USDC (101.8% health --- self-sustaining)
 1. \_accrue() --- accrual engine (lazy, in-range gated, A/365F)
 2. \_computeIL() --- spot price IL calculation with decimal adjustment
 3. \_computePayout() --- three-cap logic + LimitingFactor determination
-4. Hook callbacks --- stagePoolConfig, \_beforeInitialize, setReactiveContract, afterAddLiquidity, beforeSwap, afterSwap, beforeRemoveLiquidity, afterRemoveLiquidity
-5. checkpoint() --- permissionless + Reactive Network entry point
+4. Hook callbacks --- stagePoolConfig, \_beforeInitialize, afterAddLiquidity, beforeSwap, afterSwap, beforeRemoveLiquidity, afterRemoveLiquidity
+5. checkpoint() + checkpointCallback() + checkpointAndEmitOutOfRange() +
+   checkpointAndEmitBackInRange() --- accrual drivers + Reactive Network
+   entry points (implemented in Reactive contract session)
 6. Reactive Contract --- range transition detection + periodic heartbeat
 7. Frontend dashboard --- coverage report rendered from on-chain events
 8. Demo script --- RangeGuardDemo.s.sol with vm.warp
