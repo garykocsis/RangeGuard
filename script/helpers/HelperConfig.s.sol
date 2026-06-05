@@ -15,6 +15,11 @@ contract HelperConfig is Script {
     address internal constant LP_ROUTER_SEPOLIA = 0xB66e5338d66336Ec1fBfe60C282dF5846B6bCee2; // Example public periphery address
     address internal constant SWAP_ROUTER_SEPOLIA = 0xc7b0E7da93e076c32a2656D787FFB0E055B8E9cc;
 
+    // token1 (stable numeraire) for the Sepolia demo pool — the deployed MockUSDC (6 decimals).
+    // Persisted here right after DeployMockUSDC.s.sol broadcasts so getStableToken() never
+    // silently falls back to address(0) in a future session with no MOCK_USDC_ADDRESS env var.
+    address internal constant MOCK_USDC_SEPOLIA = 0x04feCef5110c5e52794fdA3D935BC2Cc0ee428CA;
+
     // Canonical deployment addresses on Mainnet
     address internal constant POOL_MANAGER_MAINNET = 0x000000000004444c5dc75cB358380D2e3dE08A90;
     address internal constant LP_ROUTER_MAINNET = 0x0000000000000000000000000000000000000000; // Complete with production addresses
@@ -48,6 +53,20 @@ contract HelperConfig is Script {
             lpRouter: LP_ROUTER_SEPOLIA,
             swapRouter: SWAP_ROUTER_SEPOLIA
         });
+    }
+
+    /// @notice Single source of truth for the pool's token1 (stable) address.
+    /// @dev    Reads the MOCK_USDC_ADDRESS env var first (runtime override used between the
+    ///         MockUSDC deploy and the stage/init/seed run), falling back to the persisted
+    ///         per-chain constant. Every consumer (PoolKey construction, seedBuffer) MUST read
+    ///         token1 from here and never inline an address, so the configured token1 and the
+    ///         PoolKey token1 can never diverge.
+    function getStableToken() public view returns (address) {
+        if (block.chainid == SEPOLIA_CHAIN_ID) {
+            return vm.envOr("MOCK_USDC_ADDRESS", MOCK_USDC_SEPOLIA);
+        }
+        // Other chains (mainnet/anvil) supply token1 explicitly via the env var.
+        return vm.envOr("MOCK_USDC_ADDRESS", address(0));
     }
 
     function getMainnetConfig() public pure returns (NetworkConfig memory) {

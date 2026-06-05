@@ -862,6 +862,7 @@ Out of scope (Phase 2):
 
 ### Demo Pool Setup
 
+- Pool key: currency0 = native ETH (address(0)), currency1 = USDC; tickSpacing = 60
 - Pool initialized at ~$2,000/ETH (sqrtPriceX96 set at poolManager.initialize())
 - LP deposits mix of ETH + USDC (Case B --- price in range at deposit)
 - Entry notional: ~10,000 USDC
