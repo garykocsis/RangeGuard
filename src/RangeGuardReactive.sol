@@ -122,9 +122,12 @@ contract RangeGuardReactive is AbstractPausableReactive {
     /// @dev    Subscriptions are wrapped in `if (!vm)` so local Foundry runs (where the system
     ///         contract is absent and `vm == true`) deploy without reverting. `payable` allows
     ///         initial rGas funding at deployment.
-    constructor(address _hookAddress, uint256 _hookChainId, uint256 _cronTopic, uint256 _minCheckpointInterval)
-        payable
-    {
+    constructor(
+        address _hookAddress,
+        uint256 _hookChainId,
+        uint256 _cronTopic,
+        uint256 _minCheckpointInterval
+    ) payable AbstractPausableReactive() {
         hookAddress = _hookAddress;
         hookChainId = _hookChainId;
         cronTopic = _cronTopic;
