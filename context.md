@@ -32,15 +32,21 @@ Completed:
   MAX_POSITIONS_PER_CYCLE=20). 278 tests passing.
   -> docs/session-10-reactive-contract-complete.md
 
+Sepolia HOOK deployment (Session 11): COMPLETE. Hook 0x50cd0E7e046022a9B359ca8725aCb75748FB67C0
+live on Ethereum Sepolia; ETH/USDC pool (PoolId 0xe531d420…f2b81cb) initialized at sqrtPriceX96
+3543191142285914205922034 ($2,000/ETH) with DYNAMIC_FEE_FLAG + tickSpacing 60; buffer seeded
+10,000 USDC real custody. token1 = MockUSDC 0x04feCef5110c5e52794fdA3D935BC2Cc0ee428CA (6-dec
+testnet faucet token). See docs/session-11-sepolia-deployment.md.
+
 Next implementation target:
 
-- Sepolia/ReactVM deployment
+- ReactVM (reactive) deployment, then demo script
 
 Planned next steps:
 
-- Sepolia/ReactVM deployment (hook → Sepolia, Reactive → ReactVM; deploy scripts ready;
-  live Cron + rGas funding this session)
-- Demo script (RangeGuardDemo.s.sol, full 45-day lifecycle; run against live Sepolia)
+- ReactVM deployment (Reactive → ReactVM; DeployRangeGuardReactive.s.sol ready; confirm Cron topic
+  + rGas funding + Callback Proxy on the target network first)
+- Demo script (RangeGuardDemo.s.sol, full 45-day lifecycle; run against the live Sepolia pool)
 - Frontend dashboard (coverage report rendered from Sepolia events)
 
 Recent architecture update:

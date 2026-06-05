@@ -1,5 +1,5 @@
 RangeGuard Project Status
-Last Updated: 2026-06-04 (Session 10 — Reactive contract implementation complete)
+Last Updated: 2026-06-05 (Session 11 — Sepolia deployment: hook live + pool seeded)
 How to use this file
 
 The Roadmap is the single source of truth for progress — one checkbox per item.
@@ -14,11 +14,24 @@ invariant; correctness before gas.
 
 Now
 
-Active target: Sepolia/ReactVM deployment (hook → Sepolia, Reactive → ReactVM; deploy scripts
-ready). Phase 3B protocol contracts are COMPLETE (hook reactive retrofit + RangeGuardReactive.sol).
-Remaining Phase 3B: deployment, then demo script, then frontend dashboard.
+Active target: Demo script (RangeGuardDemo.s.sol) against the live Sepolia pool, then frontend
+dashboard. The Sepolia HOOK deployment is COMPLETE (hook live, ETH/USDC pool initialized with
+DYNAMIC_FEE_FLAG, buffer seeded with 10,000 USDC real custody — all verified on-chain). The
+Reactive contract (ReactVM) is still pending — hook side is ready; confirm Cron topic + rGas
+funding + Callback Proxy before that broadcast.
 
-Just completed: Reactive Network contract (two workstreams).
+Just completed (Session 11): First live Ethereum Sepolia deployment.
+Deployed (chainId 11155111): hook 0x50cd0E7e046022a9B359ca8725aCb75748FB67C0; MockUSDC (token1)
+0x04feCef5110c5e52794fdA3D935BC2Cc0ee428CA; PoolId
+0xe531d42027094e6563d0838d0fe1c8705172d4feed0e6a5f48a08ca97f2b81cb; PoolManager
+0xE03A1074c86CFeDd5C142C4F04F1a1536e203543; owner/admin 0x193D1F3E085efc80e1027891FaA770E81ECC4A1d.
+Pool initialized at sqrtPriceX96 3543191142285914205922034 ($2,000/ETH), DYNAMIC_FEE_FLAG, tickSpacing 60.
+poolConfig committed to demo values; bufferBalanceStable = 10_000e6 (real custody); BufferSeeded verified.
+New artifacts: src/mocks/MockUSDC.sol, script/DeployMockUSDC.s.sol, script/StageInitSeedPool.s.sol,
+HelperConfig getStableToken()/MOCK_USDC_SEPOLIA. No production hook source changed.
+-> docs/session-11-sepolia-deployment.md
+
+Previously completed: Reactive Network contract (two workstreams).
 Workstream 1 — RangeGuardHook retrofit: inherits AbstractCallback (authorizedSenderOnly =
 Callback Proxy); constructor gains \_callbackSender (3-arg); added checkpointCallback /
 checkpointAndEmitOutOfRange / checkpointAndEmitBackInRange (leading ignored RVM-ID placeholder;
@@ -162,8 +175,10 @@ Reactive contract ✅ (complete — see Completed section / session-10 doc)
 - RangeGuardReactive.sol: AbstractPausableReactive on ReactVM; 3 hook subscriptions + Cron
   heartbeat; react() routing; hookChainId parameterized; reactive never mutates accounting
 
-- [ ] Sepolia/ReactVM deployment (hook → Sepolia, Reactive → ReactVM; deploy scripts ready;
-      live Cron + rGas funding this session) ← NOW
+- [x] Sepolia HOOK deployment (hook → Sepolia: MockUSDC → hook → pool staged → initialized →
+      buffer seeded; all verified on-chain — see session-11 doc)
+- [ ] ReactVM deployment (Reactive → ReactVM; DeployRangeGuardReactive.s.sol ready; confirm Cron
+      topic + rGas funding + Callback Proxy first) ← NOW
 - [ ] Demo script (RangeGuardDemo.s.sol with vm.warp, full 45-day lifecycle; run against live
       Sepolia to populate event history)
 - [ ] Frontend dashboard (coverage report rendered from Sepolia events)

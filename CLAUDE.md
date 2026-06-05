@@ -65,15 +65,25 @@ Completed (Phase 3B — Reactive Network):
   four handlers; pausable Cron-only; hookChainId-parameterized destination chain; 4-arg ctor)
 - reactive-lib v0.2.0 + remappings.txt; DeployRangeGuardReactive.s.sol; 278 tests passing
 
+Completed (Phase 3B — continued, Session 11):
+
+- Sepolia HOOK deployment: hook 0x50cd0E7e046022a9B359ca8725aCb75748FB67C0 live; MockUSDC token1
+  0x04feCef5110c5e52794fdA3D935BC2Cc0ee428CA (6-dec, permissionless mint, TESTNET ONLY);
+  ETH/USDC pool initialized (PoolId 0xe531d420…f2b81cb) at sqrtPriceX96 3543191142285914205922034
+  ($2,000/ETH), DYNAMIC_FEE_FLAG, tickSpacing 60; buffer seeded 10,000 USDC real custody (verified).
+  New artifacts: src/mocks/MockUSDC.sol, script/DeployMockUSDC.s.sol, script/StageInitSeedPool.s.sol,
+  HelperConfig getStableToken()/MOCK_USDC_SEPOLIA. See docs/session-11-sepolia-deployment.md.
+
 Current implementation target:
 
-- Sepolia/ReactVM deployment
+- ReactVM (reactive) deployment, then demo script
 
 Upcoming implementation order:
 
-1. Sepolia (hook) / ReactVM (reactive) deployment ← current
-2. Demo script (RangeGuardDemo.s.sol)
-3. Frontend dashboard
+1. Sepolia hook deployment ✅ (Session 11 — hook live, pool seeded)
+2. ReactVM (reactive) deployment ← current (confirm Cron topic + rGas + Callback Proxy first)
+3. Demo script (RangeGuardDemo.s.sol)
+4. Frontend dashboard
 
 ---
 
@@ -347,10 +357,14 @@ At the start of every session, Claude must:
 
 # Current Session State
 
-Last completed: Reactive Network contract — Workstream 1 (RangeGuardHook AbstractCallback
-retrofit) + Workstream 2 (RangeGuardReactive.sol). 278 tests passing, 0 failing. See
-docs/session-10-reactive-contract-complete.md.
-Current target: Sepolia/ReactVM deployment.
+Last completed (Session 11): First live Ethereum Sepolia HOOK deployment — MockUSDC → hook →
+pool staged → initialized → buffer seeded, all verified on-chain. Hook
+0x50cd0E7e046022a9B359ca8725aCb75748FB67C0; MockUSDC 0x04feCef5110c5e52794fdA3D935BC2Cc0ee428CA;
+PoolId 0xe531d42027094e6563d0838d0fe1c8705172d4feed0e6a5f48a08ca97f2b81cb; owner/admin
+0x193D1F3E085efc80e1027891FaA770E81ECC4A1d. Buffer = 10,000 USDC real custody. No production hook
+source changed (new testnet mock + 2 deploy scripts + HelperConfig getter only). 278 tests passing.
+See docs/session-11-sepolia-deployment.md.
+Current target: ReactVM (reactive) deployment, then demo script.
 
 Delivered this session:
 
