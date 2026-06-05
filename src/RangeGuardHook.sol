@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {BaseHook} from "v4-hooks-public/src/base/BaseHook.sol";
+import {AbstractCallback} from "reactive-lib/src/abstract-base/AbstractCallback.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
@@ -23,7 +24,7 @@ import {FixedPoint96} from "v4-core/libraries/FixedPoint96.sol";
 /// @dev    Coverage accrual is lazy and range-gated. This revision implements the
 ///         core accrual primitive (`_accrue`) and the shared accrual math helper
 ///         (`_accrueEarned`) together with the minimum state required to support them.
-contract RangeGuardHook is BaseHook {
+contract RangeGuardHook is BaseHook, AbstractCallback {
     using PoolIdLibrary for PoolKey;
     using StateLibrary for IPoolManager;
     using CurrencyLibrary for Currency;
@@ -153,8 +154,9 @@ contract RangeGuardHook is BaseHook {
     /// @notice The Uniswap v4 PoolManager this hook is bound to.
     IPoolManager public immutable i_manager;
 
-    /// @notice Protocol owner; gates `stagePoolConfig()` and `setReactiveContract()`.
-    /// @dev    Distinct from per-pool `authorizedInitializer` and `config.admin`.
+    /// @notice Protocol owner; gates `stagePoolConfig()`.
+    /// @dev    Distinct from per-pool `authorizedInitializer` and `config.admin`. Reactive
+    ///         authorization is handled separately by `AbstractCallback` (`authorizedSenderOnly`).
     address public immutable owner;
 
     /// @notice Transient staged setup per pool; deleted on commit in `_beforeInitialize()`.
@@ -165,20 +167,23 @@ contract RangeGuardHook is BaseHook {
     /// @notice True once a pool's staged config has been committed via `_beforeInitialize()`.
     mapping(PoolId => bool) internal _poolInitialized;
 
-    /// @notice One-time guard locking `reactiveContract[poolId]` after registration.
-    mapping(PoolId => bool) internal _reactiveSet;
-
     /// @notice Immutable per-pool configuration, keyed by PoolId.
     mapping(PoolId => PoolConfig) public poolConfig;
-
-    /// @notice Registered reactive contract per pool; address(0) until Phase 3.
-    mapping(PoolId => address) public reactiveContract;
 
     /// @notice Mutable per-pool buffer accounting, keyed by PoolId.
     mapping(PoolId => PoolState) public poolState;
 
     /// @notice Per-position state, scoped by pool then position key.
     mapping(PoolId => mapping(bytes32 => PositionState)) public positions;
+
+    /// @notice Last range event the hook emitted for a position: `true` after a back-in-range
+    ///         (or in-range registration), `false` after an out-of-range (or out-of-range
+    ///         registration). Drives the alternation guard that prevents duplicate
+    ///         `PositionOutOfRange` / `PositionBackInRange` events independently of the Reactive
+    ///         contract's own state. Initialized in `afterAddLiquidity` from the entry tick.
+    /// @dev    `internal` (not externally exposed) so the test harness subclass can assert on the
+    ///         alternation guard without a production getter, per the project's harness pattern.
+    mapping(PoolId => mapping(bytes32 => bool)) internal _lastRangeEventInRange;
 
     /*//////////////////////////////////////////////////////////////
                                    EVENTS
@@ -238,11 +243,8 @@ contract RangeGuardHook is BaseHook {
         PoolId indexed poolId, PoolConfig config, address authorizedInitializer, uint160 expectedSqrtPriceX96
     );
 
-    /// @notice Emitted on `_beforeInitialize()` commit (Phase 2). Reactive address not yet set.
+    /// @notice Emitted on `_beforeInitialize()` commit (Phase 2).
     event PoolConfigInitialized(PoolId indexed poolId, PoolConfig config);
-
-    /// @notice Emitted on `setReactiveContract()` (Phase 3) when the reactive address is locked.
-    event ReactiveContractSet(PoolId indexed poolId, address reactive);
 
     /// @notice Emitted on `afterSwap` when a swap funds the buffer (skipped on zero contribution).
     /// @dev    The contribution is a NOTIONAL credit (no token delta is taken in MVP — the buffer
@@ -359,6 +361,54 @@ contract RangeGuardHook is BaseHook {
     /// @param newBufferBalance  Buffer balance after the seed (stable units).
     event BufferSeeded(PoolId indexed poolId, uint256 amount, uint256 newBufferBalance);
 
+    /// @notice Emitted by `checkpointAndEmitOutOfRange()` when the Reactive contract reports that a
+    ///         position has crossed out of its active range. Carries the post-accrual coverage so the
+    ///         report can render the transition line directly from this event.
+    /// @param poolId                Pool the position belongs to.
+    /// @param positionKey           Position identifier within the pool.
+    /// @param tickLower             Position lower tick bound.
+    /// @param tickUpper             Position upper tick bound.
+    /// @param currentTick           Pool tick at the transition (read via `getSlot0`).
+    /// @param earnedCoverageStable  Cumulative earned coverage after the accrual ran (stable units).
+    /// @param timestamp             block.timestamp at the transition.
+    event PositionOutOfRange(
+        PoolId indexed poolId,
+        bytes32 indexed positionKey,
+        int24 tickLower,
+        int24 tickUpper,
+        int24 currentTick,
+        uint256 earnedCoverageStable,
+        uint256 timestamp
+    );
+
+    /// @notice Emitted by `checkpointAndEmitBackInRange()` when the Reactive contract reports that a
+    ///         position has crossed back into its active range.
+    /// @param poolId                Pool the position belongs to.
+    /// @param positionKey           Position identifier within the pool.
+    /// @param tickLower             Position lower tick bound.
+    /// @param tickUpper             Position upper tick bound.
+    /// @param currentTick           Pool tick at the transition (read via `getSlot0`).
+    /// @param earnedCoverageStable  Cumulative earned coverage after the accrual ran (stable units).
+    /// @param timestamp             block.timestamp at the transition.
+    event PositionBackInRange(
+        PoolId indexed poolId,
+        bytes32 indexed positionKey,
+        int24 tickLower,
+        int24 tickUpper,
+        int24 currentTick,
+        uint256 earnedCoverageStable,
+        uint256 timestamp
+    );
+
+    /// @notice Emitted in `afterRemoveLiquidity` on EVERY settlement path (ClaimSettled / PartialPayout
+    ///         / NoClaim / IneligibleClaim), in the same transaction as the path's own event.
+    /// @dev    Single lifecycle signal the Reactive contract subscribes to so it can stop tracking the
+    ///         position — it decouples the Reactive contract from WHY a position closed.
+    /// @param poolId       Pool the position belonged to.
+    /// @param positionKey  Position identifier within the pool.
+    /// @param owner        Position owner (the v4 `sender`; see MVP limitation).
+    event PositionClosed(PoolId indexed poolId, bytes32 indexed positionKey, address owner);
+
     /*//////////////////////////////////////////////////////////////
                                    ERRORS
     //////////////////////////////////////////////////////////////*/
@@ -369,7 +419,8 @@ contract RangeGuardHook is BaseHook {
     /// @notice Thrown by `stagePoolConfig()` when the pool is already initialized.
     error PoolAlreadyInitialized();
 
-    /// @notice Thrown by `setReactiveContract()` when the pool is not yet initialized.
+    /// @notice Thrown when an operation requires an initialized pool but the pool is not yet
+    ///         initialized (e.g. `checkpoint()`, `checkpointCallback()`, `seedBuffer()`).
     error PoolNotInitialized();
 
     /// @notice Thrown by `_beforeInitialize()` when no staged setup exists for the pool.
@@ -377,9 +428,6 @@ contract RangeGuardHook is BaseHook {
 
     /// @notice Thrown when `config.admin == address(0)`.
     error ZeroAdmin();
-
-    /// @notice Thrown when a reactive address of `address(0)` is supplied.
-    error ZeroReactive();
 
     /// @notice Thrown when `authorizedInitializer == address(0)`.
     error ZeroInitializer();
@@ -395,9 +443,6 @@ contract RangeGuardHook is BaseHook {
 
     /// @notice Thrown by `_beforeInitialize()` when `sqrtPriceX96 != expectedSqrtPriceX96`.
     error UnexpectedSqrtPrice();
-
-    /// @notice Thrown by `setReactiveContract()` when the reactive address is already set.
-    error ReactiveAlreadySet();
 
     /// @notice Thrown when fee bounds are exceeded (`baseLpFeeBps` or `bufferBps`).
     error InvalidFeeConfig();
@@ -434,6 +479,14 @@ contract RangeGuardHook is BaseHook {
     /// @notice Thrown by `seedBuffer()` when the seed amount is zero.
     error ZeroAmount();
 
+    /// @notice Thrown by `checkpointAndEmitOutOfRange()` when the position's last range event was
+    ///         already out-of-range (`_lastRangeEventInRange == false`) — prevents duplicate events.
+    error PositionAlreadyOutOfRange();
+
+    /// @notice Thrown by `checkpointAndEmitBackInRange()` when the position's last range event was
+    ///         already in-range (`_lastRangeEventInRange == true`) — prevents duplicate events.
+    error PositionAlreadyInRange();
+
     /*//////////////////////////////////////////////////////////////
                                  MODIFIERS
     //////////////////////////////////////////////////////////////*/
@@ -448,7 +501,15 @@ contract RangeGuardHook is BaseHook {
                                  FUNCTIONS
     //////////////////////////////////////////////////////////////*/
 
-    constructor(IPoolManager _manager, address _owner) BaseHook(_manager) {
+    /// @param _manager         The Uniswap v4 PoolManager this hook binds to.
+    /// @param _owner           Protocol owner; gates `stagePoolConfig()`.
+    /// @param _callbackSender  Reactive Network Callback Proxy (0x…fffFfF on all testnets);
+    ///                         registered by `AbstractCallback` as the sole `authorizedSenderOnly`
+    ///                         caller for the Reactive-callable checkpoint functions.
+    constructor(IPoolManager _manager, address _owner, address _callbackSender)
+        BaseHook(_manager)
+        AbstractCallback(_callbackSender)
+    {
         i_manager = _manager;
         owner = _owner;
     }
@@ -500,26 +561,7 @@ contract RangeGuardHook is BaseHook {
         emit PoolConfigStaged(poolId, config, authorizedInitializer, expectedSqrtPriceX96);
     }
 
-    /// @notice Phase 3: register the reactive contract address once, after its deployment.
-    /// @dev    onlyOwner, one-time. The `_reactiveSet` guard permanently locks the address
-    ///         after the first successful call. Note: `onlyOwner` runs before the one-time
-    ///         guard, so a non-owner second caller reverts `NotOwner`, not `ReactiveAlreadySet`.
-    /// @param  key       Pool key identifying the initialized pool.
-    /// @param  reactive  Deployed reactive contract address (must be non-zero).
-    function setReactiveContract(PoolKey calldata key, address reactive) external onlyOwner {
-        PoolId poolId = key.toId();
-
-        if (!_poolInitialized[poolId]) revert PoolNotInitialized();
-        if (_reactiveSet[poolId]) revert ReactiveAlreadySet();
-        if (reactive == address(0)) revert ZeroReactive();
-
-        reactiveContract[poolId] = reactive;
-        _reactiveSet[poolId] = true;
-
-        emit ReactiveContractSet(poolId, reactive);
-    }
-
-    /// @notice Permissionless single-position accrual driver; the Reactive Network's primary entry point.
+    /// @notice Permissionless single-position accrual driver; a direct entry point for keepers/LPs.
     /// @dev    Accrual ONLY — advances one position's `earnedCoverageStable` to `block.timestamp`
     ///         via `_accrue()`; never computes IL, never pays out, never moves tokens. Safe to leave
     ///         permissionless: `_accrue` is monotonic, range-gated, and ceiling-capped, and the
@@ -547,6 +589,86 @@ contract RangeGuardHook is BaseHook {
         _accrue(poolId, positionKey, _getCurrentTick(poolId));
 
         emit Checkpointed(poolId, positionKey, block.timestamp);
+    }
+
+    /// @notice Reactive-Network heartbeat accrual entry point; mirrors `checkpoint()` but is gated to
+    ///         the Callback Proxy.
+    /// @dev    `authorizedSenderOnly` (from `AbstractCallback`) restricts the caller to the Reactive
+    ///         Network Callback Proxy. The leading `address` is the RVM ID placeholder the network
+    ///         overwrites with the calling ReactVM contract's ID; it is ignored here. Same gates and
+    ///         effects as `checkpoint()`: `_poolInitialized` -> `PositionNotActive` -> `CheckpointTooSoon`,
+    ///         then `_accrue` at the live tick and emit `Checkpointed` (with `AccrualUpdated` from `_accrue`).
+    ///         Accrual ONLY — never computes IL, never pays out, never moves tokens.
+    /// @param  poolId       Pool the position belongs to.
+    /// @param  positionKey  Position identifier within the pool.
+    function checkpointCallback(address, /* RVM ID placeholder */ PoolId poolId, bytes32 positionKey)
+        external
+        authorizedSenderOnly
+    {
+        if (!_poolInitialized[poolId]) revert PoolNotInitialized();
+
+        PositionState storage pos = positions[poolId][positionKey];
+        if (!pos.active) revert PositionNotActive();
+
+        if (block.timestamp - pos.lastAccrualTime < poolConfig[poolId].minCheckpointInterval) {
+            revert CheckpointTooSoon();
+        }
+
+        _accrue(poolId, positionKey, _getCurrentTick(poolId));
+
+        emit Checkpointed(poolId, positionKey, block.timestamp);
+    }
+
+    /// @notice Atomic range transition: advance accrual and emit `PositionOutOfRange` for a position the
+    ///         Reactive contract has detected crossing out of its active range.
+    /// @dev    `authorizedSenderOnly` (Callback Proxy). NOT rate-limited (no `minCheckpointInterval`) so a
+    ///         transition is never dropped. The leading `address` is the ignored RVM ID placeholder.
+    ///         Guards in order: `PositionNotActive`, then `PositionAlreadyOutOfRange` if the last range
+    ///         event was already out-of-range (alternation guard). On success: `_accrue` at the live tick,
+    ///         flip `_lastRangeEventInRange` to false, emit `PositionOutOfRange` (post-accrual coverage).
+    ///         `AccrualUpdated` is emitted by `_accrue`.
+    /// @param  poolId       Pool the position belongs to.
+    /// @param  positionKey  Position identifier within the pool.
+    function checkpointAndEmitOutOfRange(address, /* RVM ID placeholder */ PoolId poolId, bytes32 positionKey)
+        external
+        authorizedSenderOnly
+    {
+        PositionState storage pos = positions[poolId][positionKey];
+        if (!pos.active) revert PositionNotActive();
+        if (!_lastRangeEventInRange[poolId][positionKey]) revert PositionAlreadyOutOfRange();
+
+        int24 currentTick = _getCurrentTick(poolId);
+        _accrue(poolId, positionKey, currentTick);
+        _lastRangeEventInRange[poolId][positionKey] = false;
+
+        emit PositionOutOfRange(
+            poolId, positionKey, pos.tickLower, pos.tickUpper, currentTick, pos.earnedCoverageStable, block.timestamp
+        );
+    }
+
+    /// @notice Atomic range transition: advance accrual and emit `PositionBackInRange` for a position the
+    ///         Reactive contract has detected crossing back into its active range.
+    /// @dev    `authorizedSenderOnly` (Callback Proxy). NOT rate-limited. The leading `address` is the
+    ///         ignored RVM ID placeholder. Guards in order: `PositionNotActive`, then `PositionAlreadyInRange`
+    ///         if the last range event was already in-range. On success: `_accrue` at the live tick, flip
+    ///         `_lastRangeEventInRange` to true, emit `PositionBackInRange`. `AccrualUpdated` from `_accrue`.
+    /// @param  poolId       Pool the position belongs to.
+    /// @param  positionKey  Position identifier within the pool.
+    function checkpointAndEmitBackInRange(address, /* RVM ID placeholder */ PoolId poolId, bytes32 positionKey)
+        external
+        authorizedSenderOnly
+    {
+        PositionState storage pos = positions[poolId][positionKey];
+        if (!pos.active) revert PositionNotActive();
+        if (_lastRangeEventInRange[poolId][positionKey]) revert PositionAlreadyInRange();
+
+        int24 currentTick = _getCurrentTick(poolId);
+        _accrue(poolId, positionKey, currentTick);
+        _lastRangeEventInRange[poolId][positionKey] = true;
+
+        emit PositionBackInRange(
+            poolId, positionKey, pos.tickLower, pos.tickUpper, currentTick, pos.earnedCoverageStable, block.timestamp
+        );
     }
 
     /// @notice Fund a pool's IL-coverage buffer with real token1 custody (admin only).
@@ -612,8 +734,9 @@ contract RangeGuardHook is BaseHook {
     ///         price matches exactly. On success it copies the staged config into
     ///         `poolConfig`, deletes the pending setup, and marks the pool initialized. Any
     ///         revert here makes `PoolManager.initialize()` revert in full, so a pool can
-    ///         never exist without a committed config. `reactiveContract[poolId]` remains
-    ///         `address(0)` until Phase 3.
+    ///         never exist without a committed config. Reactive authorization is handled
+    ///         out-of-band by `AbstractCallback` (`authorizedSenderOnly`); no per-pool reactive
+    ///         registration is required.
     function _beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96)
         internal
         override
@@ -765,6 +888,12 @@ contract RangeGuardHook is BaseHook {
         // Full position liquidity; the `beforeRemoveLiquidity` gate requires the LP to remove
         // exactly this amount (MVP full-withdrawal only). `liquidityDelta` is positive on an add.
         pos.liquidity = uint128(uint256(params.liquidityDelta));
+
+        // Seed the range-event alternation guard from the entry tick so the first Reactive-driven
+        // transition fires with the correct polarity. In range -> true; out of range (below or above)
+        // -> false. Range is the half-open interval [tickLower, tickUpper), matching `_accrue`.
+        _lastRangeEventInRange[poolId][positionKey] =
+            (currentTick >= params.tickLower && currentTick < params.tickUpper);
 
         _emitPositionRegistered(poolId, positionKey, sender, pos, poolConfig[poolId]);
 
@@ -1252,6 +1381,9 @@ contract RangeGuardHook is BaseHook {
         } else {
             emit PartialPayout(poolId, positionKey, owner_, tickLower, tickUpper, requested, payout, factor);
         }
+
+        // Single lifecycle signal for the Reactive contract; emitted on every settlement path.
+        emit PositionClosed(poolId, positionKey, owner_);
     }
 
     /// @notice Emits `NoClaim` (IL_raw == 0) and clears the position.
@@ -1283,6 +1415,7 @@ contract RangeGuardHook is BaseHook {
         delete positions[poolId][positionKey];
 
         emit NoClaim(poolId, positionKey, owner_, tickLower, tickUpper, vHodl, vActual);
+        emit PositionClosed(poolId, positionKey, owner_);
     }
 
     /// @notice Emits `IneligibleClaim` (minHoldSeconds not met) and clears the position.
@@ -1301,6 +1434,7 @@ contract RangeGuardHook is BaseHook {
         delete positions[poolId][positionKey];
 
         emit IneligibleClaim(poolId, positionKey, owner_, tickLower, tickUpper, REASON_MIN_HOLD_NOT_MET);
+        emit PositionClosed(poolId, positionKey, owner_);
     }
 
     /// @notice Reads the pool's current tick from the PoolManager.

@@ -21,7 +21,13 @@ import {RangeGuardHook} from "../../src/RangeGuardHook.sol";
 ///           - exposes setters to seed PoolConfig / PositionState directly;
 ///           - exposes the internal _accrue() and a position getter.
 contract RangeGuardHookHarness is RangeGuardHook {
-    constructor(IPoolManager _manager, address _owner) RangeGuardHook(_manager, _owner) {}
+    /// @notice Reactive Network Callback Proxy injected as the hook's `_callbackSender`. Tests prank
+    ///         as this address to exercise the `authorizedSenderOnly` reactive checkpoint functions.
+    address public constant CALLBACK_PROXY = 0x0000000000000000000000000000000000fffFfF;
+
+    /// @dev Two-arg constructor preserved so existing test call sites are untouched; the Callback
+    ///      Proxy is fixed (constant across testnets) and passed through to AbstractCallback.
+    constructor(IPoolManager _manager, address _owner) RangeGuardHook(_manager, _owner, CALLBACK_PROXY) {}
 
     /// @dev Skip hook-address flag validation during testing. The base function is
     ///      virtual specifically to allow this (see BaseHook NatSpec).
@@ -157,9 +163,9 @@ contract RangeGuardHookHarness is RangeGuardHook {
         return _poolInitialized[poolId];
     }
 
-    /// @notice Exposes the private `_reactiveSet` one-time guard for assertions.
-    function exposed_reactiveSet(PoolId poolId) external view returns (bool) {
-        return _reactiveSet[poolId];
+    /// @notice Exposes the `_lastRangeEventInRange` alternation guard for assertions.
+    function exposed_lastRangeEventInRange(PoolId poolId, bytes32 positionKey) external view returns (bool) {
+        return _lastRangeEventInRange[poolId][positionKey];
     }
 
     /// @notice Exposes the private `_pendingSetup` staging record for assertions.

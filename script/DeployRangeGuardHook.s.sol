@@ -21,6 +21,11 @@ contract DeployRangeGuardHook is Script {
     // local runs work with zero setup; real deployments override via PRIVATE_KEY env.
     uint256 internal constant DEFAULT_ANVIL_PK = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
 
+    // Reactive Network Callback Proxy — consistent across all Reactive Network testnets.
+    // Passed to the hook constructor and registered by AbstractCallback as the sole
+    // `authorizedSenderOnly` caller for the Reactive-callable checkpoint functions.
+    address internal constant CALLBACK_SENDER = 0x0000000000000000000000000000000000fffFfF;
+
     function run() external returns (RangeGuardHook) {
         // envOr keeps the canonical deploy flow usable in CI / fresh clones (no secret
         // required) while still honoring a real PRIVATE_KEY when one is set.
@@ -45,15 +50,17 @@ contract DeployRangeGuardHook is Script {
             | Hooks.AFTER_REMOVE_LIQUIDITY_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
             | Hooks.BEFORE_INITIALIZE_FLAG;
 
-        // The protocol owner gates stagePoolConfig()/setReactiveContract(). Because the
-        // salted `new` below is routed through the canonical CREATE2 factory, the hook's
-        // constructor msg.sender is that factory — so owner must be passed explicitly as
-        // the broadcasting EOA, both for mining (deterministic args) and at deployment.
+        // The protocol owner gates stagePoolConfig(). Because the salted `new` below is routed
+        // through the canonical CREATE2 factory, the hook's constructor msg.sender is that factory
+        // — so owner must be passed explicitly as the broadcasting EOA, both for mining
+        // (deterministic args) and at deployment.
         address ownerAddr = vm.addr(pk);
         console.log("Owner address:", ownerAddr);
 
-        // Mine a salt that will produce a hook address with the correct flags
-        bytes memory constructorArgs = abi.encode(IPoolManager(address(poolManager)), ownerAddr);
+        // Mine a salt that will produce a hook address with the correct flags. The Callback Proxy
+        // (third constructor arg) is part of the constructor args, so it must be included in mining.
+        bytes memory constructorArgs =
+            abi.encode(IPoolManager(address(poolManager)), ownerAddr, CALLBACK_SENDER);
         (address predicted, bytes32 salt) =
             HookMiner.find(CREATE2_DEPLOYER, permissions, type(RangeGuardHook).creationCode, constructorArgs);
 
@@ -63,7 +70,8 @@ contract DeployRangeGuardHook is Script {
 
         // ✅ Deterministic CREATE2 deployment broadcast
         vm.startBroadcast(pk);
-        RangeGuardHook rangeGuardHook = new RangeGuardHook{salt: salt}(IPoolManager(address(poolManager)), ownerAddr);
+        RangeGuardHook rangeGuardHook =
+            new RangeGuardHook{salt: salt}(IPoolManager(address(poolManager)), ownerAddr, CALLBACK_SENDER);
         require(address(rangeGuardHook) == predicted, "CREATE2 mismatch");
         vm.stopBroadcast();
 

@@ -1,5 +1,5 @@
 RangeGuard Project Status
-Last Updated: 2026-06-04 (Design session — Reactive contract architecture)
+Last Updated: 2026-06-04 (Session 10 — Reactive contract implementation complete)
 How to use this file
 
 The Roadmap is the single source of truth for progress — one checkbox per item.
@@ -14,59 +14,48 @@ invariant; correctness before gas.
 
 Now
 
-Active target: Reactive Network contract — two workstreams:
-Workstream 1 — Hook changes (retrofit to RangeGuardHook.sol):
+Active target: Sepolia/ReactVM deployment (hook → Sepolia, Reactive → ReactVM; deploy scripts
+ready). Phase 3B protocol contracts are COMPLETE (hook reactive retrofit + RangeGuardReactive.sol).
+Remaining Phase 3B: deployment, then demo script, then frontend dashboard.
 
-AbstractCallback inheritance; constructor gains \_callbackSender arg
-Remove reactiveContract[poolId] and \_reactiveSet[poolId] mappings
-checkpointCallback(address, PoolId, bytes32) — permissionless RVM heartbeat entry point
-checkpointAndEmitOutOfRange(address, PoolId, bytes32) — authorizedSenderOnly, atomic
-checkpointAndEmitBackInRange(address, PoolId, bytes32) — authorizedSenderOnly, atomic
-\_lastRangeEventInRange mapping; initialized in afterAddLiquidity
-PositionClosed event emitted in afterRemoveLiquidity on ALL settlement paths
-New errors: PositionAlreadyOutOfRange, PositionAlreadyInRange
+Just completed: Reactive Network contract (two workstreams).
+Workstream 1 — RangeGuardHook retrofit: inherits AbstractCallback (authorizedSenderOnly =
+Callback Proxy); constructor gains \_callbackSender (3-arg); added checkpointCallback /
+checkpointAndEmitOutOfRange / checkpointAndEmitBackInRange (leading ignored RVM-ID placeholder;
+emit-fn guards PositionAlreadyOutOfRange/InRange); \_lastRangeEventInRange alternation guard
+(init in afterAddLiquidity); PositionClosed / PositionOutOfRange / PositionBackInRange events;
+removed reactiveContract / \_reactiveSet / setReactiveContract.
+Workstream 2 — RangeGuardReactive.sol (AbstractPausableReactive, ReactVM): four if(!vm)
+subscriptions (PositionRegistered / TickUpdated / PositionClosed + Cron heartbeat); react()
+routes by source (service → heartbeat, else topic0); four handlers; getPausableSubscriptions
+returns Cron only; activeKeys swap-and-pop; hookChainId parameterizes the destination chain
+(4-arg constructor); MAX_POSITIONS_PER_CYCLE = 20; CALLBACK_GAS_LIMIT = 300_000; address(0)
+first arg in every payload. reactive-lib v0.2.0 installed (remappings.txt);
+DeployRangeGuardReactive.s.sol added (ReactVM, env-driven, dry-run verified).
+-> docs/session-10-reactive-contract-complete.md
 
-Workstream 2 — RangeGuardReactive.sol (new contract, ReactVM chain):
-
-Inherits IReactive + AbstractPausableReactive
-3 hook subscriptions: PositionRegistered, TickUpdated, PositionClosed
-Cron10 heartbeat (~1 min); checkpointCallback per active position
-react() routing: Cron10 → heartbeat, TickUpdated → range transitions,
-PositionRegistered → add tracking, PositionClosed → remove tracking
-MAX_POSITIONS_PER_CYCLE = 20; CALLBACK_GAS_LIMIT = 300_000
-RVM ID placeholder rule: address(0) first arg in ALL callback payloads
-
-Just completed: checkpoint() + seedBuffer(). checkpoint(poolId, positionKey) is
-permissionless and accrual-ONLY (no IL/payout/transfer): guards \_poolInitialized →
-PositionNotActive → block.timestamp - lastAccrualTime < minCheckpointInterval
-(CheckpointTooSoon), reads the live tick via the new private \_getCurrentTick(poolId), calls
-\_accrue, emits Checkpointed. seedBuffer(key, amount) is admin-only (config.admin) REAL
-token1 custody: guards \_poolInitialized → CallerNotAdmin → ZeroAmount, pulls via
-IERC20Minimal.transferFrom (CurrencyLibrary has no transferFrom), credits
-bufferBalanceStable ONLY (not totalSkimmedStable), emits BufferSeeded.
-Locked decisions resolved this session:
-
-R1: \_getCurrentTick — the spec referenced it but it was never implemented (callbacks
-inline getSlot0); added as a private helper for checkpoint(); existing inline reads kept.
-R2: token pull — IERC20Minimal.transferFrom with a checked bool (revert on false); admin
-must approve(hook, amount) first.
-R3: minCheckpointInterval == 0 allowed (no staging bound); same-block re-checkpoints are
-harmless (dt == 0 → zero delta). Staging validation NOT touched.
-R4: seed credits bufferBalanceStable only — totalSkimmedStable is fee accounting;
-getBufferHealth reflecting seeds in the balance is desired.
-R5: native token1 can't be seeded (no transferFrom); out of MVP scope, documented only.
-
-R2 carry-in (from session 8) RESOLVED: seedBuffer() provides the real token1 custody the
-payout transfer depends on. The new SeedBufferInvariant and the new integration test use real
-seeded custody instead of minting token1 directly to the hook.
 Carry-ins:
 
 Position owner attribution: payout recipient is the v4 sender (owner=sender MVP).
+hookChainId 4-arg constructor — authorized mid-session deviation from the locked 3-arg form;
+spec.md + reactiveSpec.md reconciled. Testability: \_lastRangeEventInRange + the three topic0
+constants are internal (spec said private).
 
-Tests: 210 passing, 0 failing.
+Tests: 278 passing, 0 failing.
 
 Completed
 
+Reactive Network contract (Phase 3B) — RangeGuardHook retrofit (BaseHook + AbstractCallback,
+authorizedSenderOnly; checkpointCallback / checkpointAndEmitOutOfRange /
+checkpointAndEmitBackInRange; \_lastRangeEventInRange guard; PositionClosed / PositionOutOfRange /
+PositionBackInRange events; reactiveContract/setReactiveContract removed) + RangeGuardReactive.sol
+(AbstractPausableReactive on ReactVM; 3 hook subscriptions + Cron heartbeat; react() routing; four
+handlers; pausable Cron-only; hookChainId-parameterized destination chain). reactive-lib v0.2.0 +
+remappings.txt; DeployRangeGuardReactive.s.sol. Pruned 10 obsolete setReactiveContract tests
+(210→200), added 78: 30 hook unit + 2 hook fuzz + 3 hook invariant (AuthorizationInvariant) +
+40 reactive unit + 2 reactive fuzz + 1 integration (CoverageAccrualLifecycle — closes the Phase 3
+in→out→in arc). (+68 net → 278 total)
+-> docs/session-10-reactive-contract-complete.md
 checkpoint() / seedBuffer() — Phase-2 externals. checkpoint() is the permissionless,
 accrual-only Reactive entry point (\_poolInitialized → active → minCheckpointInterval
 (CheckpointTooSoon) → \_accrue via new private \_getCurrentTick → Checkpointed).
@@ -153,9 +142,10 @@ bufferBalanceStable only; BufferSeeded; resolves R2 real-custody carry-in; +10 t
 Phase 3: Integration Testing
 
 Full LP lifecycle (CheckpointAndSeed: add→swap→seed→checkpoint→remove→settle, reconciled)
-Coverage accrual lifecycle (only single in-range checkpoint + final accrual covered;
-TODO: out-of-range pause / back-in-range resume / multi-checkpoint history — the in→out→in
-arc, partly gated on the Reactive contract's PositionOutOfRange/BackInRange emits)
+Coverage accrual lifecycle ✅ (CoverageAccrualLifecycle: register → heartbeat → range-out →
+range-back-in → heartbeat → close, driving hook + RangeGuardReactive with a faithful Callback-
+Proxy relay; monotonic accrual + guard flips both sides + real ClaimSettled + activeKeys empty.
+Closes the in→out→in arc previously gated on the Reactive contract's PositionOutOfRange/BackInRange)
 Buffer funding lifecycle (Swap: notional skim from real swaps; CheckpointAndSeed: real seed custody)
 Settlement lifecycle (RemoveLiquidity + CheckpointAndSeed: final accrue→IL→payout→transfer→cleanup)
 
@@ -164,19 +154,19 @@ than a single dedicated Phase 3 suite. A comprehensive single-test lifecycle
 covering all callbacks end-to-end will come with the demo script.
 Phase 3B: Protocol Completion
 
-Reactive contract
+Reactive contract ✅ (complete — see Completed section / session-10 doc)
 
-- AbstractCallback inheritance; constructor adds \_callbackSender arg
-- checkpointCallback(address, PoolId, bytes32) — authorizedSenderOnly, atomic
-- checkpointAndEmitOutOfRange(address, PoolId, bytes32) — authorizedSenderOnly, atomic
-- checkpointAndEmitBackInRange(address, PoolId, bytes32) — authorizedSenderOnly, atomic
-- \_lastRangeEventInRange guard initialized in afterAddLiquidity
-- PositionClosed event emitted in afterRemoveLiquidity on all settlement paths
-- RangeGuardReactive.sol: IReactive + AbstractPausableReactive, 3 subscriptions
-  (PositionRegistered / TickUpdated / PositionClosed) + Cron10 heartbeat
-- Reactive contracts must never mutate accounting state
-  Frontend dashboard (coverage report rendered from on-chain events)
-  Demo script (RangeGuardDemo.s.sol with vm.warp, full 45-day lifecycle)
+- RangeGuardHook retrofit: AbstractCallback (authorizedSenderOnly); checkpointCallback /
+  checkpointAndEmitOutOfRange / checkpointAndEmitBackInRange; \_lastRangeEventInRange guard;
+  PositionClosed / PositionOutOfRange / PositionBackInRange; reactiveContract removed
+- RangeGuardReactive.sol: AbstractPausableReactive on ReactVM; 3 hook subscriptions + Cron
+  heartbeat; react() routing; hookChainId parameterized; reactive never mutates accounting
+
+- [ ] Sepolia/ReactVM deployment (hook → Sepolia, Reactive → ReactVM; deploy scripts ready;
+      live Cron + rGas funding this session) ← NOW
+- [ ] Demo script (RangeGuardDemo.s.sol with vm.warp, full 45-day lifecycle; run against live
+      Sepolia to populate event history)
+- [ ] Frontend dashboard (coverage report rendered from Sepolia events)
 
 Phase 4: Protocol Invariants (cross-cutting)
 
@@ -189,10 +179,11 @@ add→checkpoint→remove campaign on shared keys)
 Settlement invariants (SettlementInvariant + SettlementExecutionInvariant: IL_raw never
 negative/bounded, payout <= every cap, buffer conserved (buffer+paidOut==seed), real custody==
 ledger, LimitingFactor matches binding cap)
-Authorization invariants (blocked on Reactive phase: authorizedSenderOnly/
-checkpointAndEmitOutOfRange/checkpointAndEmitBackInRange not built yet; access checks are
-unit-tested (owner/admin/initializer/callbackProxy) but no dedicated authorization-invariant
-suite and no "reactive never mutates accounting" coverage until Reactive contract exists)
+Authorization invariants ✅ (AuthorizationInvariant + RangeEventHandler: the three reactive
+functions are callable ONLY via the Callback Proxy — no unauthorized call succeeds across ~50k
+calls — the \_lastRangeEventInRange guard alternates correctly, and reactive/unauthorized calls
+never deactivate a position. Per-actor access checks (owner/admin/initializer/callbackProxy)
+remain unit-tested.)
 
 Phase 5: Deployment Readiness on Anvil
 
@@ -208,7 +199,12 @@ Mainnet readiness review
 Testing Infrastructure
 Status: COMPLETE
 
-Deployment: DeployRangeGuardHook.s.sol (runs without PRIVATE_KEY via envOr), HelperConfig.s.sol
-Shared harness: BaseRangeGuardTest (canonical deployment for all suites)
-Internal-access harness: RangeGuardHookHarness (seeders + exposed internals; test-only)
+Deployment: DeployRangeGuardHook.s.sol (host chain, CREATE2 + HookMiner, 3-arg ctor),
+DeployRangeGuardReactive.s.sol (ReactVM, env-driven, 4-arg ctor incl. hookChainId, rGas via
+--value), HelperConfig.s.sol
+Dependency: reactive-lib v0.2.0 (remappings.txt: reactive-lib/=lib/reactive-lib/)
+Shared harness: BaseRangeGuardTest (canonical deployment for all suites), ReactiveTestBase
+(reactive harness + manual LogRecord builders + event mirrors)
+Internal-access harness: RangeGuardHookHarness, RangeGuardReactiveHarness (exposed internals;
+test-only), MockSystemContract (etched at 0x..fffFfF for the vm==false pause/resume path)
 CI: .github/workflows/ci.yml — fmt check + build + test on every PR (Foundry pinned 1.3.5)

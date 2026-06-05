@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-// Invariant tests for the three-phase pool setup lifecycle.
+// Invariant tests for the two-phase pool setup lifecycle.
 // Protocol-domain naming per testing-strategy.md (PoolSetupInvariant), with
 // invariant_PropertyName() functions. Each invariant cites the exact rule it validates
-// from invariant-mapping.md. Randomized stage/initialize/setReactive ordering is driven
+// from invariant-mapping.md. Randomized stage/initialize ordering is driven
 // by PoolSetupHandler over the shared harness.
 
 import {PoolId} from "v4-core/types/PoolId.sol";
@@ -25,10 +25,9 @@ contract PoolSetupInvariant is BaseRangeGuardTest {
         handler = new PoolSetupHandler(harness);
 
         targetContract(address(handler));
-        bytes4[] memory selectors = new bytes4[](3);
+        bytes4[] memory selectors = new bytes4[](2);
         selectors[0] = PoolSetupHandler.stage.selector;
         selectors[1] = PoolSetupHandler.initialize.selector;
-        selectors[2] = PoolSetupHandler.setReactive.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     }
 
@@ -64,39 +63,6 @@ contract PoolSetupInvariant is BaseRangeGuardTest {
             if (harness.exposed_poolInitialized(id)) {
                 (,,,,,, uint16 maxPayoutPctOfBuffer,,,,) = harness.poolConfig(id);
                 assertLe(uint256(maxPayoutPctOfBuffer), BPS_DENOM, "buffer pct exceeds denom");
-            }
-        }
-    }
-
-    /// invariant-mapping.md (Reactive registration): "_reactiveSet[id] == true must imply
-    /// reactiveContract[id] != address(0)".
-    function invariant_ReactiveSetImpliesReactiveNonZero() public view {
-        for (uint256 i = 0; i < handler.POOL_COUNT(); i++) {
-            PoolId id = handler.idAt(i);
-            if (harness.exposed_reactiveSet(id)) {
-                assertTrue(harness.reactiveContract(id) != address(0), "reactive set but zero address");
-            }
-        }
-    }
-
-    /// invariant-mapping.md (Reactive registration): "_reactiveSet[id] == true must imply
-    /// _poolInitialized[id] == true (reactive can only be set on an initialized pool)".
-    function invariant_ReactiveSetImpliesInitialized() public view {
-        for (uint256 i = 0; i < handler.POOL_COUNT(); i++) {
-            PoolId id = handler.idAt(i);
-            if (harness.exposed_reactiveSet(id)) {
-                assertTrue(harness.exposed_poolInitialized(id), "reactive set on uninitialized pool");
-            }
-        }
-    }
-
-    /// invariant-mapping.md (Reactive registration): "_reactiveSet[id] is monotonically
-    /// true — once set, it can never return to false". Every pool the handler has ever
-    /// registered must still report the guard as locked.
-    function invariant_ReactiveSetIsMonotonicallyTrue() public view {
-        for (uint256 i = 0; i < handler.POOL_COUNT(); i++) {
-            if (handler.everReactiveSet(i)) {
-                assertTrue(harness.exposed_reactiveSet(handler.idAt(i)), "reactiveSet reverted to false");
             }
         }
     }

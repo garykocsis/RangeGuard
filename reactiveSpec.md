@@ -76,8 +76,9 @@ All incoming events are routed through one function:
 function react(LogRecord calldata log) external vmOnly;
 ```
 
-`LogRecord` contains: `_contract`, `topic_0`, `topic_1`, `topic_2`,
-`topic_3`, `data`, `block_number`, `block_timestamp`. The `vmOnly`
+`LogRecord` contains: `chain_id`, `_contract`, `topic_0`–`topic_3` (all `uint256`),
+`data`, `block_number`, `op_code`, `block_hash`, `tx_hash`, `log_index` — note there is
+no `block_timestamp` field (handlers use the `block.timestamp` global). The `vmOnly`
 modifier ensures `react()` can only be called by the ReactVM runtime.
 
 ### Callback Mechanism
@@ -444,7 +445,7 @@ event PositionRegistered(
 **topic0 constant:**
 
 ```solidity
-uint256 private constant POSITION_REGISTERED_TOPIC_0 = uint256(keccak256(
+uint256 internal constant POSITION_REGISTERED_TOPIC_0 = uint256(keccak256(
     "PositionRegistered(bytes32,bytes32,address,int24,int24,uint128,uint128,uint256,int24,uint32,uint256,uint256)"
 ));
 ```
@@ -470,7 +471,7 @@ uint256 private constant POSITION_REGISTERED_TOPIC_0 = uint256(keccak256(
 
 ```solidity
 service.subscribe(
-    SEPOLIA_CHAIN_ID, hookAddress,
+    hookChainId, hookAddress,
     POSITION_REGISTERED_TOPIC_0,
     REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
 );
@@ -496,7 +497,7 @@ event TickUpdated(
 **topic0 constant:**
 
 ```solidity
-uint256 private constant TICK_UPDATED_TOPIC_0 = uint256(keccak256(
+uint256 internal constant TICK_UPDATED_TOPIC_0 = uint256(keccak256(
     "TickUpdated(bytes32,int24,uint256)"
 ));
 ```
@@ -511,7 +512,7 @@ uint256 private constant TICK_UPDATED_TOPIC_0 = uint256(keccak256(
 
 ```solidity
 service.subscribe(
-    SEPOLIA_CHAIN_ID, hookAddress,
+    hookChainId, hookAddress,
     TICK_UPDATED_TOPIC_0,
     REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
 );
@@ -537,7 +538,7 @@ event PositionClosed(
 **topic0 constant:**
 
 ```solidity
-uint256 private constant POSITION_CLOSED_TOPIC_0 = uint256(keccak256(
+uint256 internal constant POSITION_CLOSED_TOPIC_0 = uint256(keccak256(
     "PositionClosed(bytes32,bytes32,address)"
 ));
 ```
@@ -553,7 +554,7 @@ uint256 private constant POSITION_CLOSED_TOPIC_0 = uint256(keccak256(
 
 ```solidity
 service.subscribe(
-    SEPOLIA_CHAIN_ID, hookAddress,
+    hookChainId, hookAddress,
     POSITION_CLOSED_TOPIC_0,
     REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
 );
@@ -635,7 +636,7 @@ bytes memory payload = abi.encodeWithSignature(
     pos.poolId,
     positionKey
 );
-emit Callback(SEPOLIA_CHAIN_ID, hookAddress, CALLBACK_GAS_LIMIT, payload);
+emit Callback(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload);
 ```
 
 **Hook behavior on success:**
@@ -671,7 +672,7 @@ bytes memory payload = abi.encodeWithSignature(
     "checkpointAndEmitOutOfRange(address,bytes32,bytes32)",
     address(0), poolId, positionKey
 );
-emit Callback(SEPOLIA_CHAIN_ID, hookAddress, CALLBACK_GAS_LIMIT, payload);
+emit Callback(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload);
 ```
 
 **Hook behavior on success:**
@@ -708,7 +709,7 @@ bytes memory payload = abi.encodeWithSignature(
     "checkpointAndEmitBackInRange(address,bytes32,bytes32)",
     address(0), poolId, positionKey
 );
-emit Callback(SEPOLIA_CHAIN_ID, hookAddress, CALLBACK_GAS_LIMIT, payload);
+emit Callback(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload);
 ```
 
 **Hook behavior on success:**
@@ -725,7 +726,6 @@ Reactive contract updates `lastKnownInRange = true` and does not retry.
 
 ```solidity
 uint64  private constant CALLBACK_GAS_LIMIT       = 300_000;
-uint256 private constant SEPOLIA_CHAIN_ID         = 11155111;
 uint256 private constant MAX_POSITIONS_PER_CYCLE  = 20;
 ```
 
@@ -734,7 +734,8 @@ uint256 private constant MAX_POSITIONS_PER_CYCLE  = 20;
 ### 8.1 Immutable State
 
 ```solidity
-address public immutable hookAddress;         // RangeGuardHook on Sepolia
+address public immutable hookAddress;         // RangeGuardHook on the host chain
+uint256 public immutable hookChainId;         // host chain id (e.g. 11155111 Sepolia)
 uint256 public immutable cronTopic;           // Cron10 (demo) or Cron1000 (mainnet)
 uint256 public immutable minCheckpointInterval; // 120s (demo) | 86400s (mainnet)
 ```
@@ -794,7 +795,6 @@ function _removeActiveKey(bytes32 positionKey) internal {
 ### 8.4 Chain and System Constants
 
 ```solidity
-uint256 private constant SEPOLIA_CHAIN_ID        = 11155111;
 uint256 private constant REACTIVE_CHAIN_ID       = 5318007;
 uint64  private constant CALLBACK_GAS_LIMIT      = 300_000;
 uint256 private constant MAX_POSITIONS_PER_CYCLE = 20;
@@ -804,14 +804,18 @@ uint256 private constant MAX_POSITIONS_PER_CYCLE = 20;
 
 ### 8.5 topic0 Constants
 
+Declared `internal` (not `private`) so the test harness can assert them against the hook's
+real emitted event topics — a single-character signature mismatch would silently break a
+subscription, so this wiring is verified directly.
+
 ```solidity
-uint256 private constant POSITION_REGISTERED_TOPIC_0 = uint256(keccak256(
+uint256 internal constant POSITION_REGISTERED_TOPIC_0 = uint256(keccak256(
     "PositionRegistered(bytes32,bytes32,address,int24,int24,uint128,uint128,uint256,int24,uint32,uint256,uint256)"
 ));
-uint256 private constant TICK_UPDATED_TOPIC_0 = uint256(keccak256(
+uint256 internal constant TICK_UPDATED_TOPIC_0 = uint256(keccak256(
     "TickUpdated(bytes32,int24,uint256)"
 ));
-uint256 private constant POSITION_CLOSED_TOPIC_0 = uint256(keccak256(
+uint256 internal constant POSITION_CLOSED_TOPIC_0 = uint256(keccak256(
     "PositionClosed(bytes32,bytes32,address)"
 ));
 ```
@@ -892,18 +896,17 @@ contract RangeGuardReactive is AbstractPausableReactive {
                               CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
-    uint256 private constant SEPOLIA_CHAIN_ID        = 11155111;
     uint256 private constant REACTIVE_CHAIN_ID       = 5318007;
     uint64  private constant CALLBACK_GAS_LIMIT      = 300_000;
     uint256 private constant MAX_POSITIONS_PER_CYCLE = 20;
 
-    uint256 private constant POSITION_REGISTERED_TOPIC_0 = uint256(keccak256(
+    uint256 internal constant POSITION_REGISTERED_TOPIC_0 = uint256(keccak256(
         "PositionRegistered(bytes32,bytes32,address,int24,int24,uint128,uint128,uint256,int24,uint32,uint256,uint256)"
     ));
-    uint256 private constant TICK_UPDATED_TOPIC_0 = uint256(keccak256(
+    uint256 internal constant TICK_UPDATED_TOPIC_0 = uint256(keccak256(
         "TickUpdated(bytes32,int24,uint256)"
     ));
-    uint256 private constant POSITION_CLOSED_TOPIC_0 = uint256(keccak256(
+    uint256 internal constant POSITION_CLOSED_TOPIC_0 = uint256(keccak256(
         "PositionClosed(bytes32,bytes32,address)"
     ));
 
@@ -912,6 +915,7 @@ contract RangeGuardReactive is AbstractPausableReactive {
     //////////////////////////////////////////////////////////////*/
 
     address public immutable hookAddress;
+    uint256 public immutable hookChainId;
     uint256 public immutable cronTopic;
     uint256 public immutable minCheckpointInterval;
 
@@ -933,10 +937,12 @@ contract RangeGuardReactive is AbstractPausableReactive {
 
     constructor(
         address _hookAddress,
+        uint256 _hookChainId,
         uint256 _cronTopic,
         uint256 _minCheckpointInterval
     ) payable {
         hookAddress            = _hookAddress;
+        hookChainId            = _hookChainId;
         cronTopic              = _cronTopic;
         minCheckpointInterval  = _minCheckpointInterval;
 
@@ -948,17 +954,17 @@ contract RangeGuardReactive is AbstractPausableReactive {
             );
             // Hook events (Sepolia)
             service.subscribe(
-                SEPOLIA_CHAIN_ID, _hookAddress,
+                _hookChainId, _hookAddress,
                 POSITION_REGISTERED_TOPIC_0,
                 REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
             );
             service.subscribe(
-                SEPOLIA_CHAIN_ID, _hookAddress,
+                _hookChainId, _hookAddress,
                 TICK_UPDATED_TOPIC_0,
                 REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
             );
             service.subscribe(
-                SEPOLIA_CHAIN_ID, _hookAddress,
+                _hookChainId, _hookAddress,
                 POSITION_CLOSED_TOPIC_0,
                 REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
             );
@@ -996,14 +1002,14 @@ contract RangeGuardReactive is AbstractPausableReactive {
 forge create src/RangeGuardReactive.sol:RangeGuardReactive \
   --rpc-url $REACTIVE_RPC_URL \
   --private-key $PRIVATE_KEY \
-  --constructor-args $HOOK_ADDRESS $CRON10_TOPIC 120 \
+  --constructor-args $HOOK_ADDRESS $HOOK_CHAIN_ID $CRON10_TOPIC 120 \
   --value 0.01ether
 
 # Mainnet — Cron1000, 24-hour interval
 forge create src/RangeGuardReactive.sol:RangeGuardReactive \
   --rpc-url $REACTIVE_RPC_URL \
   --private-key $PRIVATE_KEY \
-  --constructor-args $HOOK_ADDRESS $CRON1000_TOPIC 86400 \
+  --constructor-args $HOOK_ADDRESS $HOOK_CHAIN_ID $CRON1000_TOPIC 86400 \
   --value 0.01ether
 ```
 
@@ -1098,7 +1104,7 @@ function _handleTickUpdated(LogRecord calldata log) internal {
                 "checkpointAndEmitOutOfRange(address,bytes32,bytes32)",
                 address(0), poolId, positionKey
             );
-            emit Callback(SEPOLIA_CHAIN_ID, hookAddress, CALLBACK_GAS_LIMIT, payload);
+            emit Callback(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload);
             pos.lastKnownInRange = false;
             emit RangeTransitionDetected(poolId, positionKey, false, block.timestamp);
 
@@ -1108,7 +1114,7 @@ function _handleTickUpdated(LogRecord calldata log) internal {
                 "checkpointAndEmitBackInRange(address,bytes32,bytes32)",
                 address(0), poolId, positionKey
             );
-            emit Callback(SEPOLIA_CHAIN_ID, hookAddress, CALLBACK_GAS_LIMIT, payload);
+            emit Callback(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload);
             pos.lastKnownInRange = true;
             emit RangeTransitionDetected(poolId, positionKey, true, block.timestamp);
         }
@@ -1249,7 +1255,7 @@ function _handleHeartbeat() internal {
             pos.poolId,
             positionKey
         );
-        emit Callback(SEPOLIA_CHAIN_ID, hookAddress, CALLBACK_GAS_LIMIT, payload);
+        emit Callback(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload);
 
         pos.lastCheckpointTime = block.timestamp;
         count++;

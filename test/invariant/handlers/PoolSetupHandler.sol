@@ -12,11 +12,11 @@ import {RangeGuardHook} from "../../../src/RangeGuardHook.sol";
 import {RangeGuardHookHarness} from "../../harness/RangeGuardHookHarness.sol";
 
 /// @title PoolSetupHandler
-/// @notice Invariant-test handler that drives the three-phase pool setup state machine
-///         (stage -> initialize -> setReactive) across a fixed set of pools with
-///         randomized ordering and inputs. The harness `owner` is the parent test
-///         contract, so owner-gated calls are pranked as `harness.owner()` and the
-///         Phase-2 commit is pranked as the PoolManager.
+/// @notice Invariant-test handler that drives the two-phase pool setup state machine
+///         (stage -> initialize) across a fixed set of pools with randomized ordering
+///         and inputs. The harness `owner` is the parent test contract, so owner-gated
+///         calls are pranked as `harness.owner()` and the Phase-2 commit is pranked as
+///         the PoolManager.
 /// @dev    Inputs are bounded and actions are guarded by current state so the handler
 ///         advances the machine without spurious reverts. Always stages a VALID config,
 ///         so any committed pool must satisfy the pool-setup invariants by construction.
@@ -35,9 +35,6 @@ contract PoolSetupHandler is Test {
     // Per-pool staged expectations (so initialize() can satisfy the exact-match checks).
     address[POOL_COUNT] internal _initializer;
     uint160[POOL_COUNT] internal _expectedPrice;
-
-    // Ghost: pools that have ever been reactive-registered (for monotonicity).
-    bool[POOL_COUNT] internal _everReactiveSet;
 
     constructor(RangeGuardHookHarness _harness) {
         harness = _harness;
@@ -85,29 +82,12 @@ contract PoolSetupHandler is Test {
         harness.beforeInitialize(_initializer[i], _keys[i], _expectedPrice[i]);
     }
 
-    /// @notice Phase 3: register a non-zero reactive contract exactly once per pool.
-    function setReactive(uint256 poolSeed, uint256 reactiveSeed) external {
-        uint256 i = bound(poolSeed, 0, POOL_COUNT - 1);
-        if (!harness.exposed_poolInitialized(_ids[i])) return;
-        if (harness.exposed_reactiveSet(_ids[i])) return;
-
-        address reactive = address(uint160(reactiveSeed | 1)); // force non-zero
-
-        vm.prank(harness.owner());
-        harness.setReactiveContract(_keys[i], reactive);
-        _everReactiveSet[i] = true;
-    }
-
     /*//////////////////////////////////////////////////////////////
                                   VIEWS
     //////////////////////////////////////////////////////////////*/
 
     function idAt(uint256 i) external view returns (PoolId) {
         return _ids[i];
-    }
-
-    function everReactiveSet(uint256 i) external view returns (bool) {
-        return _everReactiveSet[i];
     }
 
     function _validConfig() internal pure returns (RangeGuardHook.PoolConfig memory cfg) {
