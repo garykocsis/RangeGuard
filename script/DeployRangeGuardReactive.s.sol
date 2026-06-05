@@ -55,9 +55,8 @@ contract DeployRangeGuardReactive is Script {
 
         // Deploy to ReactVM, funding the initial rGas via the payable constructor's value.
         vm.startBroadcast(pk);
-        RangeGuardReactive reactive = new RangeGuardReactive{value: rGasFundAmount}(
-            hookAddress, hookChainId, cronTopic, minCheckpointInterval
-        );
+        RangeGuardReactive reactive =
+            new RangeGuardReactive{value: rGasFundAmount}(hookAddress, hookChainId, cronTopic, minCheckpointInterval);
         vm.stopBroadcast();
 
         console.log("Reactive contract deployed at:", address(reactive));

@@ -60,7 +60,9 @@ contract RangeEventHandler is Test {
         positionKey = harness.exposed_positionKey(LP, int24(-600), int24(600), SALT);
         ModifyLiquidityParams memory params =
             ModifyLiquidityParams({tickLower: -600, tickUpper: 600, liquidityDelta: 1e18, salt: SALT});
-        harness.exposed_afterAddLiquidity(LP, poolKey, params, toBalanceDelta(0, -int128(10_000e6)), toBalanceDelta(0, 0), "");
+        harness.exposed_afterAddLiquidity(
+            LP, poolKey, params, toBalanceDelta(0, -int128(10_000e6)), toBalanceDelta(0, 0), ""
+        );
         ghost_inRange = true;
     }
 

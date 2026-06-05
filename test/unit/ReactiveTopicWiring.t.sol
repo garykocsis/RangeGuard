@@ -120,7 +120,9 @@ contract ReactiveTopicWiringTest is BaseRangeGuardTest {
             ModifyLiquidityParams({tickLower: -100, tickUpper: 100, liquidityDelta: -int256(uint256(1e18)), salt: SALT});
 
         vm.recordLogs();
-        hookH.exposed_afterRemoveLiquidity(LP, poolKey, params, toBalanceDelta(int128(1e18), int128(1e18)), toBalanceDelta(0, 0), "");
+        hookH.exposed_afterRemoveLiquidity(
+            LP, poolKey, params, toBalanceDelta(int128(1e18), int128(1e18)), toBalanceDelta(0, 0), ""
+        );
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
         assertTrue(_hasTopic(logs, reactive.topicPositionClosed()), "PositionClosed topic0 matches");

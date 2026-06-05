@@ -64,4 +64,3 @@ contract RangeGuardReactiveHarness is RangeGuardReactive {
         return POSITION_CLOSED_TOPIC_0;
     }
 }
-

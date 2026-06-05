@@ -71,7 +71,9 @@ contract RangeEventGuardFuzzTest is BaseRangeGuardTest {
         positionKey = harness.exposed_positionKey(LP, IN_LOWER, IN_UPPER, SALT);
         ModifyLiquidityParams memory params =
             ModifyLiquidityParams({tickLower: IN_LOWER, tickUpper: IN_UPPER, liquidityDelta: 1e18, salt: SALT});
-        harness.exposed_afterAddLiquidity(LP, poolKey, params, toBalanceDelta(0, -int128(10_000e6)), toBalanceDelta(0, 0), "");
+        harness.exposed_afterAddLiquidity(
+            LP, poolKey, params, toBalanceDelta(0, -int128(10_000e6)), toBalanceDelta(0, 0), ""
+        );
     }
 
     /// Why: across any sequence of attempted out/in transitions, the on-chain guard must always equal
@@ -126,7 +128,9 @@ contract RangeEventGuardFuzzTest is BaseRangeGuardTest {
         bytes32 positionKey = harness.exposed_positionKey(LP, lower, upper, SALT);
         ModifyLiquidityParams memory params =
             ModifyLiquidityParams({tickLower: lower, tickUpper: upper, liquidityDelta: 1e18, salt: SALT});
-        harness.exposed_afterAddLiquidity(LP, poolKey, params, toBalanceDelta(0, -int128(10_000e6)), toBalanceDelta(0, 0), "");
+        harness.exposed_afterAddLiquidity(
+            LP, poolKey, params, toBalanceDelta(0, -int128(10_000e6)), toBalanceDelta(0, 0), ""
+        );
 
         // Entry tick is 0 (getSlot0 on the uninitialized PoolManager pool).
         bool expected = (int24(0) >= lower && int24(0) < upper);

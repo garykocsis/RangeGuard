@@ -23,8 +23,7 @@ contract ReactivePauseResumeTest is BaseRangeGuardTest {
 
     address internal constant SERVICE_ADDR = 0x0000000000000000000000000000000000fffFfF;
     // AbstractReactive.REACTIVE_IGNORE.
-    uint256 internal constant REACTIVE_IGNORE =
-        0xa65f96fc951c35ead38878e0f0b7a3c744a6f5ccc1476b313353ce31712313ad;
+    uint256 internal constant REACTIVE_IGNORE = 0xa65f96fc951c35ead38878e0f0b7a3c744a6f5ccc1476b313353ce31712313ad;
 
     uint256 internal constant CRON_TOPIC = 0xC0FFEE;
     uint256 internal constant MIN_INTERVAL = 120;

@@ -40,7 +40,9 @@ abstract contract ReactiveTestBase is BaseRangeGuardTest {
 
     // Event mirrors.
     event Callback(uint256 indexed chain_id, address indexed _contract, uint64 indexed gas_limit, bytes payload);
-    event PositionTracked(bytes32 indexed poolId, bytes32 indexed positionKey, bool initiallyInRange, uint256 timestamp);
+    event PositionTracked(
+        bytes32 indexed poolId, bytes32 indexed positionKey, bool initiallyInRange, uint256 timestamp
+    );
     event PositionUntracked(bytes32 indexed poolId, bytes32 indexed positionKey, uint256 timestamp);
     event RangeTransitionDetected(bytes32 indexed poolId, bytes32 indexed positionKey, bool inRange, uint256 timestamp);
     event HeartbeatCheckpointFired(bytes32 indexed poolId, bytes32 indexed positionKey, uint256 timestamp);
@@ -80,7 +82,8 @@ abstract contract ReactiveTestBase is BaseRangeGuardTest {
         bytes memory data = abi.encode(
             tickLower, tickUpper, uint128(0), uint128(0), uint256(0), entryTick, uint32(0), uint256(0), uint256(0)
         );
-        return _log(SEPOLIA_CHAIN_ID, hookAddr, POSITION_REGISTERED_TOPIC_0, uint256(poolId), uint256(positionKey), data);
+        return
+            _log(SEPOLIA_CHAIN_ID, hookAddr, POSITION_REGISTERED_TOPIC_0, uint256(poolId), uint256(positionKey), data);
     }
 
     /// @dev TickUpdated: poolId is indexed; newTick + timestamp are data.
@@ -106,11 +109,15 @@ abstract contract ReactiveTestBase is BaseRangeGuardTest {
     }
 
     function _outOfRangePayload(bytes32 poolId, bytes32 positionKey) internal pure returns (bytes memory) {
-        return abi.encodeWithSignature("checkpointAndEmitOutOfRange(address,bytes32,bytes32)", address(0), poolId, positionKey);
+        return abi.encodeWithSignature(
+            "checkpointAndEmitOutOfRange(address,bytes32,bytes32)", address(0), poolId, positionKey
+        );
     }
 
     function _backInRangePayload(bytes32 poolId, bytes32 positionKey) internal pure returns (bytes memory) {
-        return abi.encodeWithSignature("checkpointAndEmitBackInRange(address,bytes32,bytes32)", address(0), poolId, positionKey);
+        return abi.encodeWithSignature(
+            "checkpointAndEmitBackInRange(address,bytes32,bytes32)", address(0), poolId, positionKey
+        );
     }
 
     /// @dev Counts dispatched `Callback` events among recorded logs (for cap / no-cap assertions).

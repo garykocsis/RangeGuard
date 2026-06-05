@@ -103,9 +103,7 @@ contract RangeGuardReactive is AbstractPausableReactive {
 
     /// @notice Emitted on ReactVM when a range transition is detected and a Callback is dispatched.
     /// @param inRange  false -> `checkpointAndEmitOutOfRange` fired; true -> `checkpointAndEmitBackInRange`.
-    event RangeTransitionDetected(
-        bytes32 indexed poolId, bytes32 indexed positionKey, bool inRange, uint256 timestamp
-    );
+    event RangeTransitionDetected(bytes32 indexed poolId, bytes32 indexed positionKey, bool inRange, uint256 timestamp);
 
     /// @notice Emitted on ReactVM when a heartbeat Callback is dispatched for a position.
     event HeartbeatCheckpointFired(bytes32 indexed poolId, bytes32 indexed positionKey, uint256 timestamp);
@@ -122,12 +120,9 @@ contract RangeGuardReactive is AbstractPausableReactive {
     /// @dev    Subscriptions are wrapped in `if (!vm)` so local Foundry runs (where the system
     ///         contract is absent and `vm == true`) deploy without reverting. `payable` allows
     ///         initial rGas funding at deployment.
-    constructor(
-        address _hookAddress,
-        uint256 _hookChainId,
-        uint256 _cronTopic,
-        uint256 _minCheckpointInterval
-    ) payable AbstractPausableReactive() {
+    constructor(address _hookAddress, uint256 _hookChainId, uint256 _cronTopic, uint256 _minCheckpointInterval)
+        payable
+    {
         hookAddress = _hookAddress;
         hookChainId = _hookChainId;
         cronTopic = _cronTopic;
@@ -135,10 +130,17 @@ contract RangeGuardReactive is AbstractPausableReactive {
 
         if (!vm) {
             // Cron heartbeat (ReactVM system contract).
-            service.subscribe(block.chainid, address(service), _cronTopic, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE);
+            service.subscribe(
+                block.chainid, address(service), _cronTopic, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
+            );
             // Hook events (host chain).
             service.subscribe(
-                _hookChainId, _hookAddress, POSITION_REGISTERED_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
+                _hookChainId,
+                _hookAddress,
+                POSITION_REGISTERED_TOPIC_0,
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE
             );
             service.subscribe(
                 _hookChainId, _hookAddress, TICK_UPDATED_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
@@ -201,9 +203,8 @@ contract RangeGuardReactive is AbstractPausableReactive {
         bytes32 poolId = bytes32(log.topic_1);
         bytes32 positionKey = bytes32(log.topic_2);
 
-        (int24 tickLower, int24 tickUpper,,,, int24 entryTick,,,) = abi.decode(
-            log.data, (int24, int24, uint128, uint128, uint256, int24, uint32, uint256, uint256)
-        );
+        (int24 tickLower, int24 tickUpper,,,, int24 entryTick,,,) =
+            abi.decode(log.data, (int24, int24, uint128, uint128, uint256, int24, uint32, uint256, uint256));
 
         // Dedup: skip if already tracking this position.
         if (positions[positionKey].active) return;

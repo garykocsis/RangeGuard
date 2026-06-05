@@ -59,8 +59,7 @@ contract DeployRangeGuardHook is Script {
 
         // Mine a salt that will produce a hook address with the correct flags. The Callback Proxy
         // (third constructor arg) is part of the constructor args, so it must be included in mining.
-        bytes memory constructorArgs =
-            abi.encode(IPoolManager(address(poolManager)), ownerAddr, CALLBACK_SENDER);
+        bytes memory constructorArgs = abi.encode(IPoolManager(address(poolManager)), ownerAddr, CALLBACK_SENDER);
         (address predicted, bytes32 salt) =
             HookMiner.find(CREATE2_DEPLOYER, permissions, type(RangeGuardHook).creationCode, constructorArgs);
 

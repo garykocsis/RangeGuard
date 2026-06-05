@@ -150,18 +150,20 @@ contract CoverageAccrualLifecycleTest is BaseRangeGuardTest {
     }
 
     function _registeredLog(int24 entryTick) internal view returns (IReactive.LogRecord memory) {
-        bytes memory data = abi.encode(
-            LOWER, UPPER, uint128(0), uint128(0), uint256(0), entryTick, uint32(0), uint256(0), uint256(0)
-        );
+        bytes memory data =
+            abi.encode(LOWER, UPPER, uint128(0), uint128(0), uint256(0), entryTick, uint32(0), uint256(0), uint256(0));
         return _log(SEPOLIA_CHAIN_ID, address(hookH), POSITION_REGISTERED_TOPIC_0, _poolIdU(), uint256(posKey), data);
     }
 
     function _tickLog(int24 newTick) internal view returns (IReactive.LogRecord memory) {
-        return _log(SEPOLIA_CHAIN_ID, address(hookH), TICK_UPDATED_TOPIC_0, _poolIdU(), 0, abi.encode(newTick, block.timestamp));
+        return _log(
+            SEPOLIA_CHAIN_ID, address(hookH), TICK_UPDATED_TOPIC_0, _poolIdU(), 0, abi.encode(newTick, block.timestamp)
+        );
     }
 
     function _closedLog() internal view returns (IReactive.LogRecord memory) {
-        return _log(SEPOLIA_CHAIN_ID, address(hookH), POSITION_CLOSED_TOPIC_0, _poolIdU(), uint256(posKey), abi.encode(LP));
+        return
+            _log(SEPOLIA_CHAIN_ID, address(hookH), POSITION_CLOSED_TOPIC_0, _poolIdU(), uint256(posKey), abi.encode(LP));
     }
 
     function _earned() internal view returns (uint256) {
@@ -231,8 +233,12 @@ contract CoverageAccrualLifecycleTest is BaseRangeGuardTest {
         // 6. CLOSE — full withdrawal with IL settles a claim on the hook (emits PositionClosed); the
         //    reactive consumes PositionClosed and untracks the position.
         vm.warp(CLOSE_T);
-        ModifyLiquidityParams memory removeParams =
-            ModifyLiquidityParams({tickLower: LOWER, tickUpper: UPPER, liquidityDelta: -int256(uint256(1e18)), salt: SALT});
+        ModifyLiquidityParams memory removeParams = ModifyLiquidityParams({
+            tickLower: LOWER,
+            tickUpper: UPPER,
+            liquidityDelta: -int256(uint256(1e18)),
+            salt: SALT
+        });
         // entry (1e18, 1e18) -> vHodl 2e18; withdraw (0.5e18, 1e18) -> vActual 1.5e18 -> IL 0.5e18.
         hookH.exposed_afterRemoveLiquidity(
             LP, poolKey, removeParams, toBalanceDelta(int128(0.5e18), int128(1e18)), toBalanceDelta(0, 0), ""

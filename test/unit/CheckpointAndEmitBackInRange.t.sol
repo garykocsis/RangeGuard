@@ -104,7 +104,9 @@ contract CheckpointAndEmitBackInRangeTest is BaseRangeGuardTest {
         positionKey = harness.exposed_positionKey(LP, lower, upper, SALT);
         ModifyLiquidityParams memory params =
             ModifyLiquidityParams({tickLower: lower, tickUpper: upper, liquidityDelta: 1e18, salt: SALT});
-        harness.exposed_afterAddLiquidity(LP, poolKey, params, toBalanceDelta(0, -int128(ENTRY1)), toBalanceDelta(0, 0), "");
+        harness.exposed_afterAddLiquidity(
+            LP, poolKey, params, toBalanceDelta(0, -int128(ENTRY1)), toBalanceDelta(0, 0), ""
+        );
     }
 
     function _expectedDelta(uint256 dt) internal pure returns (uint256) {
