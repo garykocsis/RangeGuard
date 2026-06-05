@@ -7,11 +7,11 @@ pragma solidity ^0.8.26;
 // - override setUp() with super.setUp()
 // - one test file per function/component per testing-strategy.md
 //
-// Hook-level coverage: getHookPermissions + the three-phase pool setup
-// (stagePoolConfig / _beforeInitialize commit / setReactiveContract). The setup
-// functions are exercised through RangeGuardHookHarness so the test contract is the
-// protocol `owner` (harness constructor receives address(this)) and internal/private
-// setup state can be asserted via the harness getters.
+// Hook-level coverage: getHookPermissions + the two-phase pool setup
+// (stagePoolConfig / _beforeInitialize commit). The setup functions are exercised
+// through RangeGuardHookHarness so the test contract is the protocol `owner` (harness
+// constructor receives address(this)) and internal/private setup state can be asserted
+// via the harness getters.
 
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
@@ -35,13 +35,11 @@ contract RangeGuardHookTest is BaseRangeGuardTest {
         uint160 expectedSqrtPriceX96
     );
     event PoolConfigInitialized(PoolId indexed poolId, RangeGuardHook.PoolConfig config);
-    event ReactiveContractSet(PoolId indexed poolId, address reactive);
 
     RangeGuardHookHarness internal harness;
 
     // Actors.
     address internal constant INITIALIZER = address(0x1117);
-    address internal constant REACTIVE = address(0xBEEF);
     address internal constant ADMIN = address(0xA11CE);
     address internal constant NOT_OWNER = address(0xBAD);
 
@@ -348,73 +346,5 @@ contract RangeGuardHookTest is BaseRangeGuardTest {
 
         vm.prank(address(harness.i_manager()));
         harness.beforeInitialize(INITIALIZER, key, EXPECTED_SQRT_PRICE);
-    }
-
-    /// Why: reactive registration is Phase 3 — after commit, reactiveContract is still zero.
-    function test_BeforeInitialize_WhenCommitted_ReactiveStillZero() public {
-        (PoolKey memory key, PoolId poolId) = _stageValid();
-        _commit(key);
-
-        assertEq(harness.reactiveContract(poolId), address(0), "reactive not set at init");
-        assertEq(harness.exposed_reactiveSet(poolId), false, "reactive guard false at init");
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                       setReactiveContract
-    //////////////////////////////////////////////////////////////*/
-
-    function test_SetReactiveContract_WhenNotOwner_Reverts() public {
-        (PoolKey memory key,) = _stageValid();
-        _commit(key);
-
-        vm.prank(NOT_OWNER);
-        vm.expectRevert(RangeGuardHook.NotOwner.selector);
-        harness.setReactiveContract(key, REACTIVE);
-    }
-
-    function test_SetReactiveContract_WhenPoolNotInitialized_Reverts() public {
-        (PoolKey memory key,) = _stageValid(); // staged but not committed
-        vm.expectRevert(RangeGuardHook.PoolNotInitialized.selector);
-        harness.setReactiveContract(key, REACTIVE);
-    }
-
-    function test_SetReactiveContract_WhenZeroReactive_Reverts() public {
-        (PoolKey memory key,) = _stageValid();
-        _commit(key);
-
-        vm.expectRevert(RangeGuardHook.ZeroReactive.selector);
-        harness.setReactiveContract(key, address(0));
-    }
-
-    function test_SetReactiveContract_WhenValid_SetsAddress() public {
-        (PoolKey memory key, PoolId poolId) = _stageValid();
-        _commit(key);
-
-        harness.setReactiveContract(key, REACTIVE);
-
-        assertEq(harness.reactiveContract(poolId), REACTIVE, "reactive address set");
-        assertEq(harness.exposed_reactiveSet(poolId), true, "reactive guard locked");
-    }
-
-    function test_SetReactiveContract_WhenValid_EmitsReactiveContractSet() public {
-        (PoolKey memory key, PoolId poolId) = _stageValid();
-        _commit(key);
-
-        vm.expectEmit(true, false, false, true, address(harness));
-        emit ReactiveContractSet(poolId, REACTIVE);
-        harness.setReactiveContract(key, REACTIVE);
-    }
-
-    /// Why: one-time guard — a second call (by the owner) must revert ReactiveAlreadySet,
-    /// and the originally-registered address must be unchanged.
-    function test_SetReactiveContract_WhenAlreadySet_Reverts() public {
-        (PoolKey memory key, PoolId poolId) = _stageValid();
-        _commit(key);
-        harness.setReactiveContract(key, REACTIVE);
-
-        vm.expectRevert(RangeGuardHook.ReactiveAlreadySet.selector);
-        harness.setReactiveContract(key, address(0x9999));
-
-        assertEq(harness.reactiveContract(poolId), REACTIVE, "address unchanged after revert");
     }
 }

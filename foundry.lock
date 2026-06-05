@@ -1,0 +1,8 @@
+{
+  "lib/reactive-lib": {
+    "tag": {
+      "name": "v0.2.0",
+      "rev": "d664678a7d86204c9391af4cedfd5ae0b0b904e4"
+    }
+  }
+}

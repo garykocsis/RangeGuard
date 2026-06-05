@@ -53,16 +53,27 @@ Completed (Phase 2 — continued):
   minCheckpointInterval (CheckpointTooSoon) gates, \_getCurrentTick + \_accrue, Checkpointed)
 - seedBuffer() (admin-only real token1 custody via IERC20Minimal.transferFrom; credits
   bufferBalanceStable only — totalSkimmedStable untouched; BufferSeeded; resolves R2 real-custody
-  carry-in; 210 tests passing)
+  carry-in)
+
+Completed (Phase 3B — Reactive Network):
+
+- RangeGuardHook retrofit (BaseHook + AbstractCallback, authorizedSenderOnly; 3-arg ctor with
+  \_callbackSender; checkpointCallback / checkpointAndEmitOutOfRange / checkpointAndEmitBackInRange;
+  \_lastRangeEventInRange guard; PositionClosed / PositionOutOfRange / PositionBackInRange;
+  reactiveContract/setReactiveContract removed)
+- RangeGuardReactive.sol (AbstractPausableReactive on ReactVM; 4 subscriptions; react() routing;
+  four handlers; pausable Cron-only; hookChainId-parameterized destination chain; 4-arg ctor)
+- reactive-lib v0.2.0 + remappings.txt; DeployRangeGuardReactive.s.sol; 278 tests passing
 
 Current implementation target:
 
-- Reactive Network contract
+- Sepolia/ReactVM deployment
 
 Upcoming implementation order:
 
-1. Reactive Network contract ← current
-2. Frontend dashboard
+1. Sepolia (hook) / ReactVM (reactive) deployment ← current
+2. Demo script (RangeGuardDemo.s.sol)
+3. Frontend dashboard
 
 ---
 
@@ -296,12 +307,16 @@ Do not introduce architectural changes without updating:
 
 5. checkpoint() ✅ (permissionless accrual driver; Reactive entry point) + seedBuffer() ✅
    (admin-only real token1 custody) — both complete and tested.
-   Next: Reactive Network contract (AbstractCallback + authorizedSenderOnly +
-   checkpointCallback/checkpointAndEmitOutOfRange/checkpointAndEmitBackInRange)
 
-6. Callback-specific tests
+6. Reactive Network contract ✅ — RangeGuardHook AbstractCallback retrofit (authorizedSenderOnly;
+   checkpointCallback / checkpointAndEmitOutOfRange / checkpointAndEmitBackInRange;
+   \_lastRangeEventInRange guard; PositionClosed/OutOfRange/BackInRange) + RangeGuardReactive.sol
+   (AbstractPausableReactive on ReactVM; hookChainId-parameterized; reactive-lib v0.2.0).
+   Next: Sepolia/ReactVM deployment, then demo script, then frontend dashboard.
 
-7. End-to-end integration testing
+7. Callback-specific + reactive tests ✅ (278 passing)
+
+8. End-to-end integration testing ✅ (CoverageAccrualLifecycle closes the in→out→in arc)
 
 Do not begin implementation of a later phase until the current phase is complete and tested.
 
@@ -332,59 +347,38 @@ At the start of every session, Claude must:
 
 # Current Session State
 
-Last completed: checkpoint() + seedBuffer() (210 tests passing). See
-docs/session-9-checkpoint-seedBuffer-complete.md.
-Current target: Reactive Network contract. Two workstreams in this session:
+Last completed: Reactive Network contract — Workstream 1 (RangeGuardHook AbstractCallback
+retrofit) + Workstream 2 (RangeGuardReactive.sol). 278 tests passing, 0 failing. See
+docs/session-10-reactive-contract-complete.md.
+Current target: Sepolia/ReactVM deployment.
 
-WORKSTREAM 1 — Hook changes (retrofit to existing RangeGuardHook.sol):
+Delivered this session:
 
-- AbstractCallback inheritance: RangeGuardHook inherits BaseHook AND AbstractCallback
-- Constructor gains third arg: address \_callbackSender (Callback Proxy)
-  constructor(IPoolManager \_manager, address \_owner, address \_callbackSender)
-- Remove: reactiveContract[poolId] mapping, \_reactiveSet[poolId] mapping
-- Remove: any custom onlyReactive modifier — replaced by authorizedSenderOnly (AbstractCallback)
-- afterAddLiquidity: add \_lastRangeEventInRange[poolId][positionKey] initialization
-  (true if entryTick in range, false if not)
-- afterRemoveLiquidity: emit PositionClosed(poolId, positionKey, owner) on ALL settlement
-  paths (after ClaimSettled/NoClaim/IneligibleClaim/PartialPayout)
-- New functions:
-  checkpointCallback(address /_sender_/, PoolId, bytes32) — permissionless, same gates
-  as checkpoint(), RVM ID placeholder first arg
-  checkpointAndEmitOutOfRange(address /_sender_/, PoolId, bytes32) — authorizedSenderOnly,
-  not rate-limited, atomic: \_accrue + \_lastRangeEventInRange=false + PositionOutOfRange
-  guard: revert PositionAlreadyOutOfRange if \_lastRangeEventInRange already false
-  checkpointAndEmitBackInRange(address /_sender_/, PoolId, bytes32) — authorizedSenderOnly,
-  not rate-limited, atomic: \_accrue + \_lastRangeEventInRange=true + PositionBackInRange
-  guard: revert PositionAlreadyInRange if \_lastRangeEventInRange already true
-- New state: mapping(PoolId => mapping(bytes32 => bool)) private \_lastRangeEventInRange
-- New errors: PositionAlreadyOutOfRange, PositionAlreadyInRange
-- New event: PositionClosed(PoolId indexed, bytes32 indexed positionKey, address owner)
+- RangeGuardHook: BaseHook + AbstractCallback (authorizedSenderOnly = Callback Proxy 0x..fffFfF);
+  3-arg constructor (IPoolManager, owner, \_callbackSender); checkpointCallback /
+  checkpointAndEmitOutOfRange / checkpointAndEmitBackInRange (leading ignored RVM-ID placeholder);
+  \_lastRangeEventInRange alternation guard (init in afterAddLiquidity); PositionClosed /
+  PositionOutOfRange / PositionBackInRange events; PositionAlreadyOutOfRange/InRange errors;
+  reactiveContract / \_reactiveSet / setReactiveContract removed.
+- RangeGuardReactive.sol: AbstractPausableReactive on ReactVM; constructor
+  (address \_hookAddress, uint256 \_hookChainId, uint256 \_cronTopic, uint256 \_minCheckpointInterval)
+  payable; four if(!vm) subscriptions; react() vmOnly routes by source (service → heartbeat,
+  else topic0); four handlers; getPausableSubscriptions returns Cron only; activeKeys swap-and-pop;
+  MAX_POSITIONS_PER_CYCLE=20; CALLBACK_GAS_LIMIT=300_000; address(0) first arg in every payload.
+- Infra: reactive-lib v0.2.0 (remappings.txt: reactive-lib/=lib/reactive-lib/);
+  DeployRangeGuardReactive.s.sol (ReactVM, env-driven, dry-run verified);
+  RangeGuardReactiveHarness + MockSystemContract + ReactiveTestBase.
 
-WORKSTREAM 2 — RangeGuardReactive.sol (new contract, ReactVM chain):
+Mid-session deviations (authorized):
 
-- Inherits: IReactive, AbstractPausableReactive
-- Constructor args: address \_owner, address \_hookAddress, uint256 \_cronTopic
-- Subscriptions in constructor (inside if (!vm)):
-  service.subscribe(SEPOLIA_CHAIN_ID, hookAddress, POSITION_REGISTERED_TOPIC_0, ...)
-  service.subscribe(SEPOLIA_CHAIN_ID, hookAddress, TICK_UPDATED_TOPIC_0, ...)
-  service.subscribe(SEPOLIA_CHAIN_ID, hookAddress, POSITION_CLOSED_TOPIC_0, ...)
-  service.subscribe(block.chainid, address(service), cronTopic, ...)
-- State: mapping(bytes32 => PositionInfo) positions, bytes32[] activeKeys
-  struct PositionInfo { PoolId poolId; int24 tickLower; int24 tickUpper;
-  bool lastKnownInRange; bool active; uint256 lastCheckpointTime; }
-- react(LogRecord calldata log) external vmOnly — routes to four handlers
-- Cron10 handler: iterate activeKeys (cap MAX_POSITIONS_PER_CYCLE=20), emit
-  Callback per position exceeding minCheckpointInterval
-- TickUpdated handler: detect range transitions, emit Callback for
-  checkpointAndEmitOutOfRange or checkpointAndEmitBackInRange
-- PositionRegistered handler: add to tracking, init lastKnownRangeStatus
-- PositionClosed handler: remove from tracking
-- CALLBACK_GAS_LIMIT = 300_000; MAX_POSITIONS_PER_CYCLE = 20
-- RVM ID placeholder RULE (CRITICAL): address(0) MUST be first arg in every
-  abi.encodeWithSignature payload — network overwrites it with ReactVM contract ID
+- hookChainId: the reactive constructor is 4-arg (host chain parameterized as the subscription
+  source + callback destination), NOT the originally locked 3-arg. spec.md + reactiveSpec.md
+  reconciled.
+- Testability: \_lastRangeEventInRange and the three topic0 constants are internal (spec said
+  private) so the harness can assert them; RangeGuardReactive uses MIT / pragma 0.8.26.
 
-Next up: Frontend dashboard, then demo script.
-Notes: Doc-fix pass complete — all docs reconciled with final Reactive design.
-Carry-ins: payout recipient = v4 sender (owner=sender MVP).
-checkpoint/seedBuffer implementation details preserved from session 9 — see
-docs/session-9-checkpoint-seedBuffer-complete.md for full carry-in context.
+Next up: Sepolia deployment (hook → Sepolia, Reactive → ReactVM; deploy scripts ready) → demo
+script → frontend dashboard.
+Carry-ins: payout recipient = v4 sender (owner=sender MVP). Before deploying, confirm the Cron
+topic value, rGas funding amount, and the Callback Proxy address on the target network
+(reactiveSpec §18.3 / §18.7 / §18.9).

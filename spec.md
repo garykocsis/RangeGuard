@@ -510,11 +510,11 @@ function checkpoint(PoolId poolId, bytes32 positionKey) external {
 ### checkpointCallback() — Reactive Network Heartbeat Entry Point
 
 ```solidity
-/// @notice Reactive Network heartbeat entry point. Wraps checkpoint() with the
-///         required RVM ID sender placeholder as the first parameter.
+/// @notice Reactive Network heartbeat entry point. Mirrors checkpoint()'s gates and
+///         effects, with the required RVM ID sender placeholder as the first parameter.
 /// @dev  The sender arg is the ReactVM
 ///      contract ID injected by the network — it is not validated and is ignored.
-///      onlu called by reactive network
+///      only called by reactive network
 function checkpointCallback(
     address /* sender */,       // RVM ID placeholder — ignored
     PoolId   poolId,
@@ -656,6 +656,10 @@ On `PositionRegistered`: add position to internal tracking map, initialize
 
 On `TickUpdated`: evaluate tracked positions against new tick, detect transitions:
 
+(`hookChainId` is a constructor parameter — the host chain the hook is deployed on —
+used as both the subscription source chain and the callback destination chain, so the
+contract is not hardcoded to Sepolia.)
+
 ```solidity
 bytes memory payload = abi.encodeWithSignature(
     "checkpointAndEmitOutOfRange(address,bytes32,bytes32)",
@@ -663,7 +667,7 @@ bytes memory payload = abi.encodeWithSignature(
     pos.poolId,
     positionKey
 );
-emit Callback(SEPOLIA_CHAIN_ID, hookAddress, 300_000, payload);
+emit Callback(hookChainId, hookAddress, 300_000, payload);
 ```
 
 On `PositionClosed`: remove position from tracking and heartbeat schedule.
@@ -688,7 +692,7 @@ for (uint256 i = 0; i < activeKeys.length && i < MAX_POSITIONS_PER_CYCLE; i++) {
         pos.poolId,
         activeKeys[i]
     );
-    emit Callback(SEPOLIA_CHAIN_ID, hookAddress, 300_000, payload);
+    emit Callback(hookChainId, hookAddress, 300_000, payload);
 }
 
 uint256 private constant MAX_POSITIONS_PER_CYCLE = 20;
@@ -739,7 +743,8 @@ Security is provided by `AbstractCallback` (`authorizedSenderOnly` modifier):
 Phase 1: stagePoolConfig()       — owner, before PoolManager.initialize()
 Phase 2: _beforeInitialize()     — PoolManager callback, commits staged config
 (then):  seedBuffer()            — admin, funds real token1 custody
-(then):  deploy Reactive contract — pass hookAddress; begins subscriptions
+(then):  deploy Reactive contract — pass hookAddress + hookChainId + cronTopic +
+         minCheckpointInterval; begins subscriptions
 ```
 
 ## 9. LimitingFactor Enum
@@ -925,8 +930,9 @@ Buffer balance: 10,176.75 USDC (101.8% health --- self-sustaining)
    checkpointAndEmitBackInRange() --- accrual drivers + Reactive Network
    entry points (implemented in Reactive contract session)
 6. Reactive Contract --- range transition detection + periodic heartbeat
-7. Frontend dashboard --- coverage report rendered from on-chain events
+7. Sepolia/ReactVM deployment --- hook → Sepolia, Reactive → ReactVM (deploy scripts ready)
 8. Demo script --- RangeGuardDemo.s.sol with vm.warp
+9. Frontend dashboard --- coverage report rendered from Sepolia events
 
 ## 17. References
 

@@ -23,21 +23,36 @@ Completed:
 - beforeRemoveLiquidity() / afterRemoveLiquidity()
 - checkpoint() (permissionless, accrual-only Reactive entry point)
 - seedBuffer() (real token1 custody backing the buffer)
+- Reactive Network contract (Phase 3B): RangeGuardHook retrofit (AbstractCallback +
+  authorizedSenderOnly; checkpointCallback / checkpointAndEmitOutOfRange /
+  checkpointAndEmitBackInRange; \_lastRangeEventInRange guard; PositionClosed /
+  PositionOutOfRange / PositionBackInRange events; reactiveContract/setReactiveContract
+  removed) + RangeGuardReactive.sol (AbstractPausableReactive on ReactVM; 3 hook
+  subscriptions + Cron heartbeat; react() routing; hookChainId parameterized;
+  MAX_POSITIONS_PER_CYCLE=20). 278 tests passing.
+  -> docs/session-10-reactive-contract-complete.md
 
 Next implementation target:
 
-- authorizedSenderOnly (AbstractCallback) + checkpointAndEmitOutOfRange/BackInRange
+- Sepolia/ReactVM deployment
 
 Planned next steps:
 
-- Reactive contract ← current (AbstractCallback (authorizedSenderOnly), checkpointAndEmitOutOfRange/
-  checkpointAndEmitBackInRange, PositionClosed event, Cron10 heartbeat, subscribe to TickUpdated, drive checkpoint() on heartbeat + crossings)
-- Doc-fix pass (reconcile invariant-mapping.md / state-machine.md / spec.md §6–§8 with the
-  v4-native settlement model + the \_getCurrentTick helper)
-- Frontend dashboard
+- Sepolia/ReactVM deployment (hook → Sepolia, Reactive → ReactVM; deploy scripts ready;
+  live Cron + rGas funding this session)
+- Demo script (RangeGuardDemo.s.sol, full 45-day lifecycle; run against live Sepolia)
+- Frontend dashboard (coverage report rendered from Sepolia events)
 
 Recent architecture update:
 
+- Reactive Network (Phase 3B, complete): the hook is driven by the Reactive Network via
+  AbstractCallback (authorizedSenderOnly = Callback Proxy 0x..fffFfF), NOT a per-pool
+  reactiveContract registration (removed). Three reactive-callable hook functions take a
+  leading ignored RVM-ID placeholder address. RangeGuardReactive.sol (AbstractPausableReactive,
+  ReactVM) subscribes to PositionRegistered/TickUpdated/PositionClosed + a Cron heartbeat,
+  tracks per-position range status, and dispatches checkpoint callbacks; the host chain is a
+  constructor param (hookChainId), not hardcoded. Reactive contracts NEVER mutate hook
+  accounting state. Testability: \_lastRangeEventInRange + topic0 constants are internal.
 - checkpoint(poolId, positionKey): permissionless, accrual-ONLY (no IL/payout/transfer).
   Guards \_poolInitialized -> active -> minCheckpointInterval (CheckpointTooSoon), reads the
   live tick via the new private \_getCurrentTick(poolId), calls \_accrue, emits Checkpointed.

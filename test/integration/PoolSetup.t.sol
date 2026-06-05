@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-// Integration tests for the three-phase pool setup through the REAL PoolManager.
+// Integration tests for the two-phase pool setup through the REAL PoolManager.
 // Unlike the unit suite (which calls beforeInitialize directly on the harness), these
 // drive PoolManager.initialize() against the canonically-deployed hook to prove the
 // Phase-2 commit fires via the live callback and that a reverting commit creates no pool.
@@ -73,18 +73,11 @@ contract PoolSetupIntegration is BaseRangeGuardTest {
         assertEq(baseLpFeeBps, 3000, "config committed via live callback");
         assertEq(admin, ADMIN, "admin committed");
 
-        // Reactive not yet registered (Phase 3 deferred).
-        assertEq(rangeGuardHook.reactiveContract(poolId), address(0), "reactive zero post-init");
-
-        // Pool now immutable: re-staging reverts.
+        // Pool now immutable: re-staging reverts. (Reactive authorization is handled by
+        // AbstractCallback's authorizedSenderOnly — no per-pool registration step.)
         vm.prank(ownerAddr);
         vm.expectRevert(RangeGuardHook.PoolAlreadyInitialized.selector);
         rangeGuardHook.stagePoolConfig(key, _config(), INITIALIZER, SQRT_PRICE_1_1);
-
-        // Phase 3 completes the lifecycle.
-        vm.prank(ownerAddr);
-        rangeGuardHook.setReactiveContract(key, address(0xBEEF));
-        assertEq(rangeGuardHook.reactiveContract(poolId), address(0xBEEF), "reactive registered");
     }
 
     /// Why: an unauthorized initializer makes the Phase-2 commit revert, which reverts
