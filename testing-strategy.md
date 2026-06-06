@@ -86,8 +86,8 @@ Validate isolated function correctness:
 - `_beforeRemoveLiquidity()` (validation only)
 - `_afterRemoveLiquidity()` (all settlement logic)
 - `checkpointCallback()` (RVM ID sender param, same gates as checkpoint())
-- `checkpointAndEmitOutOfRange()` (authorizedSenderOnly, guard, atomic)
-- `checkpointAndEmitBackInRange()` (authorizedSenderOnly, guard, atomic)
+- `checkpointAndEmitOutOfRange()` (onlyServiceProvider, guard, atomic)
+- `checkpointAndEmitBackInRange()` (onlyServiceProvider, guard, atomic)
 - `PositionClosed` event emission
 - `_lastRangeEventInRange` guard initialization
 - PoolConfig validation
@@ -280,7 +280,7 @@ Tests should validate:
 
 ## checkpointAndEmitOutOfRange()
 
-- Reverts when caller is not Callback Proxy (`authorizedSenderOnly`)
+- Reverts when caller is not Callback Proxy (`onlyServiceProvider`)
 - Reverts `PositionNotActive` when position inactive
 - Reverts `PositionAlreadyOutOfRange` when `_lastRangeEventInRange` is already false
 - Not rate-limited — no `minCheckpointInterval` check
@@ -289,7 +289,7 @@ Tests should validate:
 
 ## checkpointAndEmitBackInRange()
 
-- Reverts when caller is not Callback Proxy (`authorizedSenderOnly`)
+- Reverts when caller is not Callback Proxy (`onlyServiceProvider`)
 - Reverts `PositionNotActive` when position inactive
 - Reverts `PositionAlreadyInRange` when `_lastRangeEventInRange` is already true
 - Not rate-limited — no `minCheckpointInterval` check
@@ -328,7 +328,7 @@ Tests should validate:
 
 **Authorization:**
 
-- `authorizedSenderOnly` functions revert for all non-Callback-Proxy callers
+- `onlyServiceProvider` functions revert for all non-Callback-Proxy callers
 
 ---
 

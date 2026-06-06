@@ -1,1 +1,1 @@
-reactive-lib/=lib/reactive-lib/
+reactive-lib/=lib/reactive-lib-omni/

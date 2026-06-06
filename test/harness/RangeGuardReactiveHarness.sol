@@ -31,9 +31,9 @@ contract RangeGuardReactiveHarness is RangeGuardReactive {
         _handlePositionClosed(log);
     }
 
-    /// @notice Exposes the resolved system-contract address (`service`) for routing assertions.
+    /// @notice Exposes the resolved system-contract address (`SYSTEM`) for routing assertions.
     function exposed_service() external view returns (address) {
-        return address(service);
+        return address(SYSTEM);
     }
 
     /// @notice Exposes the `vm` flag (true outside ReactVM, e.g. plain Foundry).

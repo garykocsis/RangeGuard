@@ -24,7 +24,7 @@ Completed:
 - checkpoint() (permissionless, accrual-only Reactive entry point)
 - seedBuffer() (real token1 custody backing the buffer)
 - Reactive Network contract (Phase 3B): RangeGuardHook retrofit (AbstractCallback +
-  authorizedSenderOnly; checkpointCallback / checkpointAndEmitOutOfRange /
+  onlyServiceProvider; checkpointCallback / checkpointAndEmitOutOfRange /
   checkpointAndEmitBackInRange; \_lastRangeEventInRange guard; PositionClosed /
   PositionOutOfRange / PositionBackInRange events; reactiveContract/setReactiveContract
   removed) + RangeGuardReactive.sol (AbstractPausableReactive on ReactVM; 3 hook
@@ -32,28 +32,41 @@ Completed:
   MAX_POSITIONS_PER_CYCLE=20). 278 tests passing.
   -> docs/session-10-reactive-contract-complete.md
 
-Sepolia HOOK deployment (Session 11): COMPLETE. Hook 0x50cd0E7e046022a9B359ca8725aCb75748FB67C0
-live on Ethereum Sepolia; ETH/USDC pool (PoolId 0xe531d420…f2b81cb) initialized at sqrtPriceX96
-3543191142285914205922034 ($2,000/ETH) with DYNAMIC_FEE_FLAG + tickSpacing 60; buffer seeded
-10,000 USDC real custody. token1 = MockUSDC 0x04feCef5110c5e52794fdA3D935BC2Cc0ee428CA (6-dec
-testnet faucet token). See docs/session-11-sepolia-deployment.md.
+Sepolia HOOK deployment (Session 11): COMPLETE but SUPERSEDED in Session 12. Original hook
+0x50cd0E7e046022a9B359ca8725aCb75748FB67C0 / PoolId 0xe531d420…f2b81cb. token1 = MockUSDC
+0x04feCef5110c5e52794fdA3D935BC2Cc0ee428CA (reused by the Session-12 redeploy). See
+docs/session-11-sepolia-deployment.md.
+
+reactive-lib-omni migration + ReactVM deployment (Session 12): COMPLETE. Migrated reactive-lib
+v0.2.0 → reactive-lib-omni v0.1.0 (Omni fork): onlyServiceProvider (was authorizedSenderOnly),
+SYSTEM.requestCallbackV_1_0 (was emit Callback), SYSTEM 0x8888…8888 (was service 0x…fffFfF),
+camelCase LogRecord, local AbstractPausableReactive port (src/base/, lib removed the upstream one);
+solc stays 0.8.26 (lib pragma relaxed); 278 tests passing. HOOK REDEPLOYED for Lasna — the Omni
+fork changed the Sepolia callback proxy to 0xc9f36411C9897e7F959D99ffca2a0Ba7ee0D7bDA and the live
+hook's auth is immutable, so it could not accept Lasna callbacks. New hook
+0xFead6CeaD66f86101f0D0fc5A9B97888FA54a7C0; new PoolId
+0x3e2f931d495879c5ff87e338192def0f0b824bdf07e9f9c16b02cdba34aaa61a; buffer re-seeded 10k USDC.
+Reactive contract LIVE on Reactive Lasna (chainId 5318007): 0xC0e6b70c8FF75962541183fdc247E7B07AD6B70b
+(tx 0xed865d…5329), funded 0.05 lREACT, wired to the new hook. See
+docs/session-12-reactive-deployment.md.
 
 Next implementation target:
 
-- ReactVM (reactive) deployment, then demo script
+- Demo script (RangeGuardDemo.s.sol), then frontend dashboard
 
 Planned next steps:
 
-- ReactVM deployment (Reactive → ReactVM; DeployRangeGuardReactive.s.sol ready; confirm Cron topic
-  + rGas funding + Callback Proxy on the target network first)
-- Demo script (RangeGuardDemo.s.sol, full 45-day lifecycle; run against the live Sepolia pool)
+- Demo script (RangeGuardDemo.s.sol): add liquidity + swap on the live Sepolia pool to drive
+  PositionTracked (ReactVM) → Checkpointed (Sepolia) end-to-end; full lifecycle event history.
+  (This is the only remaining piece for Phase-7 end-to-end verification.)
 - Frontend dashboard (coverage report rendered from Sepolia events)
 
 Recent architecture update:
 
-- Reactive Network (Phase 3B, complete): the hook is driven by the Reactive Network via
-  AbstractCallback (authorizedSenderOnly = Callback Proxy 0x..fffFfF), NOT a per-pool
-  reactiveContract registration (removed). Three reactive-callable hook functions take a
+- Reactive Network (complete; migrated to reactive-lib-omni / Omni fork in Session 12): the hook
+  is driven by the Reactive Network via AbstractCallback (onlyServiceProvider = the host-chain
+  Callback Proxy — PER NETWORK; Lasna→Sepolia = 0xc9f36411…7bDA, NOT the legacy 0x..fffFfF), NOT a
+  per-pool reactiveContract registration (removed). Three reactive-callable hook functions take a
   leading ignored RVM-ID placeholder address. RangeGuardReactive.sol (AbstractPausableReactive,
   ReactVM) subscribes to PositionRegistered/TickUpdated/PositionClosed + a Cron heartbeat,
   tracks per-position range status, and dispatches checkpoint callbacks; the host chain is a
@@ -419,13 +432,13 @@ Job 2 - Periodic heartbeat (time-driven):
   tracked position that has exceeded minCheckpointInterval
 - Track lastCheckpointTime per position to avoid CheckpointTooSoon waste
 
-Hook functions callable by Reactive Network only (authorizedSenderOnly via AbstractCallback):
+Hook functions callable by Reactive Network only (onlyServiceProvider via AbstractCallback):
 
 checkpointCallback(address, PoolId, bytes32 positionKey)
 checkpointAndEmitOutOfRange(address, PoolId, bytes32 positionKey)
 checkpointAndEmitBackInRange(address, PoolId, bytes32 positionKey)
-(access controlled: authorizedSenderOnly — Callback Proxy
-0x0000000000000000000000000000000000fffFfF)
+(access controlled: onlyServiceProvider — host-chain Callback Proxy, per network;
+Lasna→Sepolia = 0xc9f36411C9897e7F959D99ffca2a0Ba7ee0D7bDA, not the legacy 0x…fffFfF)
 
 ## 12. View Functions (Final)
 

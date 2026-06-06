@@ -88,7 +88,7 @@ preserve these invariants under all valid execution paths.
 
 # Authorization Invariants
 
-- `authorizedSenderOnly` (AbstractCallback Callback Proxy) may call
+- `onlyServiceProvider` (AbstractCallback Callback Proxy) may call
   checkpointAndEmitOutOfRange() and checkpointAndEmitBackInRange()
 - Reactive contracts must never directly mutate accounting state
 - only `config.admin` (per-pool) may call `seedBuffer()`

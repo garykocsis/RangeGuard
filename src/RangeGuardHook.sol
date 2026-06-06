@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.26;
+pragma solidity ^0.8.26;
 
 import {BaseHook} from "v4-hooks-public/src/base/BaseHook.sol";
-import {AbstractCallback} from "reactive-lib/src/abstract-base/AbstractCallback.sol";
+import {AbstractCallback} from "reactive-lib/src/base/AbstractCallback.sol";
+import {IPayable} from "reactive-lib/src/interfaces/IPayable.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
@@ -156,7 +157,7 @@ contract RangeGuardHook is BaseHook, AbstractCallback {
 
     /// @notice Protocol owner; gates `stagePoolConfig()`.
     /// @dev    Distinct from per-pool `authorizedInitializer` and `config.admin`. Reactive
-    ///         authorization is handled separately by `AbstractCallback` (`authorizedSenderOnly`).
+    ///         authorization is handled separately by `AbstractCallback` (`onlyServiceProvider`).
     address public immutable owner;
 
     /// @notice Transient staged setup per pool; deleted on commit in `_beforeInitialize()`.
@@ -503,12 +504,15 @@ contract RangeGuardHook is BaseHook, AbstractCallback {
 
     /// @param _manager         The Uniswap v4 PoolManager this hook binds to.
     /// @param _owner           Protocol owner; gates `stagePoolConfig()`.
-    /// @param _callbackSender  Reactive Network Callback Proxy (0x…fffFfF on all testnets);
-    ///                         registered by `AbstractCallback` as the sole `authorizedSenderOnly`
-    ///                         caller for the Reactive-callable checkpoint functions.
+    /// @param _callbackSender  Reactive Network Callback Proxy (0x…fffFfF on testnets); under
+    ///                         reactive-lib-omni this is the `_SERVICE_PROVIDER` (callback proxy /
+    ///                         payment vendor) and the sole `onlyServiceProvider` caller authorized
+    ///                         to drive the Reactive-callable checkpoint functions. The same address
+    ///                         fills both the proxy slot and the legacy callback-sender slot, matching
+    ///                         the pre-Omni single-address authorization model.
     constructor(IPoolManager _manager, address _owner, address _callbackSender)
         BaseHook(_manager)
-        AbstractCallback(_callbackSender)
+        AbstractCallback(IPayable(payable(_callbackSender)), _callbackSender)
     {
         i_manager = _manager;
         owner = _owner;
@@ -593,7 +597,7 @@ contract RangeGuardHook is BaseHook, AbstractCallback {
 
     /// @notice Reactive-Network heartbeat accrual entry point; mirrors `checkpoint()` but is gated to
     ///         the Callback Proxy.
-    /// @dev    `authorizedSenderOnly` (from `AbstractCallback`) restricts the caller to the Reactive
+    /// @dev    `onlyServiceProvider` (from `AbstractCallback`) restricts the caller to the Reactive
     ///         Network Callback Proxy. The leading `address` is the RVM ID placeholder the network
     ///         overwrites with the calling ReactVM contract's ID; it is ignored here. Same gates and
     ///         effects as `checkpoint()`: `_poolInitialized` -> `PositionNotActive` -> `CheckpointTooSoon`,
@@ -603,7 +607,7 @@ contract RangeGuardHook is BaseHook, AbstractCallback {
     /// @param  positionKey  Position identifier within the pool.
     function checkpointCallback(address, /* RVM ID placeholder */ PoolId poolId, bytes32 positionKey)
         external
-        authorizedSenderOnly
+        onlyServiceProvider
     {
         if (!_poolInitialized[poolId]) revert PoolNotInitialized();
 
@@ -621,7 +625,7 @@ contract RangeGuardHook is BaseHook, AbstractCallback {
 
     /// @notice Atomic range transition: advance accrual and emit `PositionOutOfRange` for a position the
     ///         Reactive contract has detected crossing out of its active range.
-    /// @dev    `authorizedSenderOnly` (Callback Proxy). NOT rate-limited (no `minCheckpointInterval`) so a
+    /// @dev    `onlyServiceProvider` (Callback Proxy). NOT rate-limited (no `minCheckpointInterval`) so a
     ///         transition is never dropped. The leading `address` is the ignored RVM ID placeholder.
     ///         Guards in order: `PositionNotActive`, then `PositionAlreadyOutOfRange` if the last range
     ///         event was already out-of-range (alternation guard). On success: `_accrue` at the live tick,
@@ -631,7 +635,7 @@ contract RangeGuardHook is BaseHook, AbstractCallback {
     /// @param  positionKey  Position identifier within the pool.
     function checkpointAndEmitOutOfRange(address, /* RVM ID placeholder */ PoolId poolId, bytes32 positionKey)
         external
-        authorizedSenderOnly
+        onlyServiceProvider
     {
         PositionState storage pos = positions[poolId][positionKey];
         if (!pos.active) revert PositionNotActive();
@@ -648,7 +652,7 @@ contract RangeGuardHook is BaseHook, AbstractCallback {
 
     /// @notice Atomic range transition: advance accrual and emit `PositionBackInRange` for a position the
     ///         Reactive contract has detected crossing back into its active range.
-    /// @dev    `authorizedSenderOnly` (Callback Proxy). NOT rate-limited. The leading `address` is the
+    /// @dev    `onlyServiceProvider` (Callback Proxy). NOT rate-limited. The leading `address` is the
     ///         ignored RVM ID placeholder. Guards in order: `PositionNotActive`, then `PositionAlreadyInRange`
     ///         if the last range event was already in-range. On success: `_accrue` at the live tick, flip
     ///         `_lastRangeEventInRange` to true, emit `PositionBackInRange`. `AccrualUpdated` from `_accrue`.
@@ -656,7 +660,7 @@ contract RangeGuardHook is BaseHook, AbstractCallback {
     /// @param  positionKey  Position identifier within the pool.
     function checkpointAndEmitBackInRange(address, /* RVM ID placeholder */ PoolId poolId, bytes32 positionKey)
         external
-        authorizedSenderOnly
+        onlyServiceProvider
     {
         PositionState storage pos = positions[poolId][positionKey];
         if (!pos.active) revert PositionNotActive();
@@ -735,7 +739,7 @@ contract RangeGuardHook is BaseHook, AbstractCallback {
     ///         `poolConfig`, deletes the pending setup, and marks the pool initialized. Any
     ///         revert here makes `PoolManager.initialize()` revert in full, so a pool can
     ///         never exist without a committed config. Reactive authorization is handled
-    ///         out-of-band by `AbstractCallback` (`authorizedSenderOnly`); no per-pool reactive
+    ///         out-of-band by `AbstractCallback` (`onlyServiceProvider`); no per-pool reactive
     ///         registration is required.
     function _beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96)
         internal

@@ -12,6 +12,7 @@ import {IReactive} from "reactive-lib/src/interfaces/IReactive.sol";
 
 import {BaseRangeGuardTest} from "./BaseRangeGuardTest.t.sol";
 import {RangeGuardReactiveHarness} from "../harness/RangeGuardReactiveHarness.sol";
+import {MockSystemContract} from "../harness/MockSystemContract.sol";
 
 abstract contract ReactiveTestBase is BaseRangeGuardTest {
     RangeGuardReactiveHarness internal reactive;
@@ -35,6 +36,11 @@ abstract contract ReactiveTestBase is BaseRangeGuardTest {
     uint256 internal constant SEPOLIA_CHAIN_ID = 11155111;
     uint64 internal constant CALLBACK_GAS_LIMIT = 300_000;
 
+    // reactive-lib-omni system contract (SYSTEM). Under the new lib, callbacks are dispatched via
+    // SYSTEM.requestCallbackV_1_0, so the etched mock here is the Callback event emitter (not the
+    // reactive contract). Dispatch-pinned expectEmit assertions use this as the emitter address.
+    address internal constant SYSTEM_ADDR = 0x8888888888888888888888888888888888888888;
+
     // topic0 of IReactive.Callback(uint256,address,uint64,bytes) — for counting dispatched callbacks.
     bytes32 internal constant CALLBACK_TOPIC0 = keccak256("Callback(uint256,address,uint64,bytes)");
 
@@ -51,6 +57,11 @@ abstract contract ReactiveTestBase is BaseRangeGuardTest {
         super.setUp();
         hookAddr = address(rangeGuardHook);
         reactive = new RangeGuardReactiveHarness(hookAddr, SEPOLIA_CHAIN_ID, CRON_TOPIC, MIN_INTERVAL);
+        // Etch the mock system contract at SYSTEM (0x8888…) AFTER constructing the harness: detectVm()
+        // already ran in the constructor (no code present -> vm == true, so react() stays callable and
+        // constructor subscriptions are skipped, matching plain-Foundry behavior). The mock is now
+        // present so the handlers' SYSTEM.requestCallbackV_1_0 dispatch succeeds and re-emits Callback.
+        vm.etch(SYSTEM_ADDR, address(new MockSystemContract()).code);
         vm.warp(REACT_TS);
     }
 
@@ -63,14 +74,14 @@ abstract contract ReactiveTestBase is BaseRangeGuardTest {
         pure
         returns (IReactive.LogRecord memory r)
     {
-        r.chain_id = chainId;
-        r._contract = contract_;
-        r.topic_0 = t0;
-        r.topic_1 = t1;
-        r.topic_2 = t2;
-        r.topic_3 = 0;
+        r.chainId = chainId;
+        r.contractAddress = contract_;
+        r.topic0 = t0;
+        r.topic1 = t1;
+        r.topic2 = t2;
+        r.topic3 = 0;
         r.data = data;
-        // block_number / op_code / block_hash / tx_hash / log_index left zero (unused by handlers).
+        // blockNumber / opCode / blockHash / txHash / logIndex left zero (unused by handlers).
     }
 
     /// @dev PositionRegistered: poolId/positionKey/owner are indexed; the 9 remaining fields are data.

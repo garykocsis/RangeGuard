@@ -1,5 +1,5 @@
 RangeGuard Project Status
-Last Updated: 2026-06-05 (Session 11 — Sepolia deployment: hook live + pool seeded)
+Last Updated: 2026-06-05 (Session 12 — reactive-lib-omni migration + ReactVM deployment on Lasna)
 How to use this file
 
 The Roadmap is the single source of truth for progress — one checkbox per item.
@@ -14,25 +14,41 @@ invariant; correctness before gas.
 
 Now
 
-Active target: Demo script (RangeGuardDemo.s.sol) against the live Sepolia pool, then frontend
-dashboard. The Sepolia HOOK deployment is COMPLETE (hook live, ETH/USDC pool initialized with
-DYNAMIC_FEE_FLAG, buffer seeded with 10,000 USDC real custody — all verified on-chain). The
-Reactive contract (ReactVM) is still pending — hook side is ready; confirm Cron topic + rGas
-funding + Callback Proxy before that broadcast.
+Active target: Demo script (RangeGuardDemo.s.sol) — add liquidity → register a position →
+swap/heartbeat → observe the callback round-trip (PositionTracked on ReactVM → Checkpointed on
+Sepolia) end-to-end — then frontend dashboard. Both the hook (redeployed for Lasna) AND the
+Reactive contract (ReactVM, Lasna) are now LIVE. The end-to-end demo hasn't been exercised only
+because no LP-deposit/swap tooling exists yet for the live Sepolia pool — that IS the demo script.
 
-Just completed (Session 11): First live Ethereum Sepolia deployment.
-Deployed (chainId 11155111): hook 0x50cd0E7e046022a9B359ca8725aCb75748FB67C0; MockUSDC (token1)
-0x04feCef5110c5e52794fdA3D935BC2Cc0ee428CA; PoolId
+Just completed (Session 12): reactive-lib → reactive-lib-omni (Omni fork) migration + first live
+ReactVM deployment on Reactive Lasna.
+- LIBRARY: removed reactive-lib v0.2.0, installed reactive-lib-omni v0.1.0. API rewrite handled —
+  onlyServiceProvider (was authorizedSenderOnly), SYSTEM.requestCallbackV_1_0 (was emit Callback),
+  SYSTEM 0x8888…8888 (was service 0x…fffFfF), camelCase LogRecord, local AbstractPausableReactive
+  port at src/base/ (the lib removed the upstream one). solc stays 0.8.26 (lib pragma relaxed
+  ^0.8.29→^0.8.26; v4-core PoolManager pins 0.8.26). 278 tests passing, 0 failing.
+- HOOK REDEPLOYED for Lasna: the Omni fork changed the Sepolia callback proxy to
+  0xc9f36411C9897e7F959D99ffca2a0Ba7ee0D7bDA, and the live 0x50cd… hook's auth is immutable, so it
+  could not accept Lasna callbacks. New hook 0xFead6CeaD66f86101f0D0fc5A9B97888FA54a7C0; new PoolId
+  0x3e2f931d495879c5ff87e338192def0f0b824bdf07e9f9c16b02cdba34aaa61a; MockUSDC reused
+  0x04feCef5110c5e52794fdA3D935BC2Cc0ee428CA; buffer re-seeded 10,000 USDC. The old 0x50cd… hook is
+  SUPERSEDED.
+- REACTIVE CONTRACT LIVE on Reactive Lasna (chainId 5318007):
+  0xC0e6b70c8FF75962541183fdc247E7B07AD6B70b (tx 0xed865d580eef19d972436d4e9c9cce40b7359ef393dd3967c9a280e8a22f5329),
+  funded 0.05 lREACT, wired to the new hook (hookChainId 11155111, Cron10, minCheckpointInterval 120).
+  Verified by direct RPC reads. Idle cost = 0 (rGas is per-callback; no-op heartbeat spends nothing).
+- NOT DONE: Phase-7 end-to-end (LP deposit → swap → Checkpointed) — needs the demo script (next).
+-> docs/session-12-reactive-deployment.md
+
+Previously completed (Session 11): First live Ethereum Sepolia HOOK deployment — NOW SUPERSEDED by
+the Session-12 redeploy. Old hook 0x50cd0E7e046022a9B359ca8725aCb75748FB67C0; PoolId
 0xe531d42027094e6563d0838d0fe1c8705172d4feed0e6a5f48a08ca97f2b81cb; PoolManager
 0xE03A1074c86CFeDd5C142C4F04F1a1536e203543; owner/admin 0x193D1F3E085efc80e1027891FaA770E81ECC4A1d.
-Pool initialized at sqrtPriceX96 3543191142285914205922034 ($2,000/ETH), DYNAMIC_FEE_FLAG, tickSpacing 60.
-poolConfig committed to demo values; bufferBalanceStable = 10_000e6 (real custody); BufferSeeded verified.
-New artifacts: src/mocks/MockUSDC.sol, script/DeployMockUSDC.s.sol, script/StageInitSeedPool.s.sol,
-HelperConfig getStableToken()/MOCK_USDC_SEPOLIA. No production hook source changed.
+MockUSDC 0x04feCef5110c5e52794fdA3D935BC2Cc0ee428CA (reused by the Session-12 redeploy).
 -> docs/session-11-sepolia-deployment.md
 
 Previously completed: Reactive Network contract (two workstreams).
-Workstream 1 — RangeGuardHook retrofit: inherits AbstractCallback (authorizedSenderOnly =
+Workstream 1 — RangeGuardHook retrofit: inherits AbstractCallback (onlyServiceProvider =
 Callback Proxy); constructor gains \_callbackSender (3-arg); added checkpointCallback /
 checkpointAndEmitOutOfRange / checkpointAndEmitBackInRange (leading ignored RVM-ID placeholder;
 emit-fn guards PositionAlreadyOutOfRange/InRange); \_lastRangeEventInRange alternation guard
@@ -43,7 +59,7 @@ subscriptions (PositionRegistered / TickUpdated / PositionClosed + Cron heartbea
 routes by source (service → heartbeat, else topic0); four handlers; getPausableSubscriptions
 returns Cron only; activeKeys swap-and-pop; hookChainId parameterizes the destination chain
 (4-arg constructor); MAX_POSITIONS_PER_CYCLE = 20; CALLBACK_GAS_LIMIT = 300_000; address(0)
-first arg in every payload. reactive-lib v0.2.0 installed (remappings.txt);
+first arg in every payload. reactive-lib-omni v0.1.0 installed (remappings.txt);
 DeployRangeGuardReactive.s.sol added (ReactVM, env-driven, dry-run verified).
 -> docs/session-10-reactive-contract-complete.md
 
@@ -59,11 +75,11 @@ Tests: 278 passing, 0 failing.
 Completed
 
 Reactive Network contract (Phase 3B) — RangeGuardHook retrofit (BaseHook + AbstractCallback,
-authorizedSenderOnly; checkpointCallback / checkpointAndEmitOutOfRange /
+onlyServiceProvider; checkpointCallback / checkpointAndEmitOutOfRange /
 checkpointAndEmitBackInRange; \_lastRangeEventInRange guard; PositionClosed / PositionOutOfRange /
 PositionBackInRange events; reactiveContract/setReactiveContract removed) + RangeGuardReactive.sol
 (AbstractPausableReactive on ReactVM; 3 hook subscriptions + Cron heartbeat; react() routing; four
-handlers; pausable Cron-only; hookChainId-parameterized destination chain). reactive-lib v0.2.0 +
+handlers; pausable Cron-only; hookChainId-parameterized destination chain). reactive-lib-omni v0.1.0 +
 remappings.txt; DeployRangeGuardReactive.s.sol. Pruned 10 obsolete setReactiveContract tests
 (210→200), added 78: 30 hook unit + 2 hook fuzz + 3 hook invariant (AuthorizationInvariant) +
 40 reactive unit + 2 reactive fuzz + 1 integration (CoverageAccrualLifecycle — closes the Phase 3
@@ -107,7 +123,7 @@ Full test suite: 10 unit + 3 fuzz + 3 invariant (PositionLifecycleInvariant + ha
 Pool setup (two-phase) — stagePoolConfig() + \_beforeInitialize() commit;
 owner immutable (explicit ctor arg) + onlyOwner, hard-bound constants, PendingPoolSetup struct,
 setup mappings, events, errors. Reactive authorization via AbstractCallback
-(authorizedSenderOnly — Callback Proxy) replaces setReactiveContract(). Full test suite:
+(onlyServiceProvider — Callback Proxy) replaces setReactiveContract(). Full test suite:
 32 unit + 3 fuzz (StagePoolConfigFuzz) + 6 invariant (PoolSetupInvariant + handler) +
 4 integration (real PoolManager.initialize round-trip). Deploy script and harness updated
 for the owner ctor param. (+45 tests → 123 total)
@@ -169,18 +185,18 @@ Phase 3B: Protocol Completion
 
 Reactive contract ✅ (complete — see Completed section / session-10 doc)
 
-- RangeGuardHook retrofit: AbstractCallback (authorizedSenderOnly); checkpointCallback /
+- RangeGuardHook retrofit: AbstractCallback (onlyServiceProvider); checkpointCallback /
   checkpointAndEmitOutOfRange / checkpointAndEmitBackInRange; \_lastRangeEventInRange guard;
   PositionClosed / PositionOutOfRange / PositionBackInRange; reactiveContract removed
 - RangeGuardReactive.sol: AbstractPausableReactive on ReactVM; 3 hook subscriptions + Cron
   heartbeat; react() routing; hookChainId parameterized; reactive never mutates accounting
 
-- [x] Sepolia HOOK deployment (hook → Sepolia: MockUSDC → hook → pool staged → initialized →
-      buffer seeded; all verified on-chain — see session-11 doc)
-- [ ] ReactVM deployment (Reactive → ReactVM; DeployRangeGuardReactive.s.sol ready; confirm Cron
-      topic + rGas funding + Callback Proxy first) ← NOW
-- [ ] Demo script (RangeGuardDemo.s.sol with vm.warp, full 45-day lifecycle; run against live
-      Sepolia to populate event history)
+- [x] Sepolia HOOK deployment (Session 11: hook → Sepolia → pool → buffer seeded — REDEPLOYED in
+      Session 12 for Lasna as 0xFead…a7C0; old 0x50cd… superseded — see session-11/12 docs)
+- [x] ReactVM deployment (Session 12: Reactive → Reactive Lasna 0xC0e6…B70b, funded + wired to the
+      new hook, verified by RPC — see session-12 doc)
+- [ ] Demo script (RangeGuardDemo.s.sol — add liquidity + swap on the live Sepolia pool to drive
+      PositionTracked → Checkpointed end-to-end; full lifecycle event history) ← NOW
 - [ ] Frontend dashboard (coverage report rendered from Sepolia events)
 
 Phase 4: Protocol Invariants (cross-cutting)
@@ -217,7 +233,7 @@ Status: COMPLETE
 Deployment: DeployRangeGuardHook.s.sol (host chain, CREATE2 + HookMiner, 3-arg ctor),
 DeployRangeGuardReactive.s.sol (ReactVM, env-driven, 4-arg ctor incl. hookChainId, rGas via
 --value), HelperConfig.s.sol
-Dependency: reactive-lib v0.2.0 (remappings.txt: reactive-lib/=lib/reactive-lib/)
+Dependency: reactive-lib-omni v0.1.0 (remappings.txt: reactive-lib/=lib/reactive-lib-omni/)
 Shared harness: BaseRangeGuardTest (canonical deployment for all suites), ReactiveTestBase
 (reactive harness + manual LogRecord builders + event mirrors)
 Internal-access harness: RangeGuardHookHarness, RangeGuardReactiveHarness (exposed internals;

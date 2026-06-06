@@ -29,6 +29,7 @@ import {BaseRangeGuardTest} from "../shared/BaseRangeGuardTest.t.sol";
 import {RangeGuardHook} from "../../src/RangeGuardHook.sol";
 import {RangeGuardHookHarness} from "../harness/RangeGuardHookHarness.sol";
 import {RangeGuardReactiveHarness} from "../harness/RangeGuardReactiveHarness.sol";
+import {MockSystemContract} from "../harness/MockSystemContract.sol";
 
 contract CoverageAccrualLifecycleTest is BaseRangeGuardTest {
     using PoolIdLibrary for PoolKey;
@@ -51,6 +52,8 @@ contract CoverageAccrualLifecycleTest is BaseRangeGuardTest {
     address internal constant INITIALIZER = address(0x1117);
     address internal constant LP = address(0x11FE);
     address internal constant CALLBACK_PROXY = 0x0000000000000000000000000000000000fffFfF;
+    // reactive-lib-omni system contract (SYSTEM); the etched mock re-emits Callback on dispatch.
+    address internal constant SYSTEM_ADDR = 0x8888888888888888888888888888888888888888;
     bytes32 internal constant SALT = bytes32(uint256(7));
     uint160 internal constant EXPECTED_SQRT_PRICE = 79228162514264337593543950336;
 
@@ -87,6 +90,9 @@ contract CoverageAccrualLifecycleTest is BaseRangeGuardTest {
         super.setUp();
         hookH = new RangeGuardHookHarness(rangeGuardHook.i_manager(), address(this));
         reactive = new RangeGuardReactiveHarness(address(hookH), SEPOLIA_CHAIN_ID, CRON_TOPIC, MIN_INTERVAL);
+        // Etch the mock SYSTEM after construction (vm stays true, react() callable) so the reactive
+        // handlers' SYSTEM.requestCallbackV_1_0 dispatch succeeds and re-emits the Callback event.
+        vm.etch(SYSTEM_ADDR, address(new MockSystemContract()).code);
 
         stable = new MockERC20("USDC", "USDC", 6);
         stable.mint(address(hookH), 1e30); // real backing for the settlement payout
@@ -137,11 +143,11 @@ contract CoverageAccrualLifecycleTest is BaseRangeGuardTest {
         pure
         returns (IReactive.LogRecord memory r)
     {
-        r.chain_id = chainId;
-        r._contract = c;
-        r.topic_0 = t0;
-        r.topic_1 = t1;
-        r.topic_2 = t2;
+        r.chainId = chainId;
+        r.contractAddress = c;
+        r.topic0 = t0;
+        r.topic1 = t1;
+        r.topic2 = t2;
         r.data = data;
     }
 
@@ -190,7 +196,7 @@ contract CoverageAccrualLifecycleTest is BaseRangeGuardTest {
 
         // 2. HEARTBEAT #1 — reactive dispatches checkpointCallback; relay executes it on the hook.
         vm.warp(HB1);
-        vm.expectEmit(true, true, true, true, address(reactive));
+        vm.expectEmit(true, true, true, true, SYSTEM_ADDR);
         emit Callback(SEPOLIA_CHAIN_ID, address(hookH), CALLBACK_GAS_LIMIT, _checkpointPayload());
         reactive.exposed_handleHeartbeat();
         _relayCheckpoint();
@@ -200,7 +206,7 @@ contract CoverageAccrualLifecycleTest is BaseRangeGuardTest {
         // 3. RANGE OUT — reactive detects in->out, dispatches checkpointAndEmitOutOfRange; relay flips
         //    the hook guard to false and accrues.
         vm.warp(OUT_T);
-        vm.expectEmit(true, true, true, true, address(reactive));
+        vm.expectEmit(true, true, true, true, SYSTEM_ADDR);
         emit Callback(SEPOLIA_CHAIN_ID, address(hookH), CALLBACK_GAS_LIMIT, _outOfRangePayload());
         reactive.exposed_handleTickUpdated(_tickLog(500)); // 500 out of [-100,100)
         _relayOutOfRange();
@@ -213,7 +219,7 @@ contract CoverageAccrualLifecycleTest is BaseRangeGuardTest {
         // 4. RANGE BACK IN — reactive detects out->in, dispatches checkpointAndEmitBackInRange; relay
         //    flips the hook guard back to true.
         vm.warp(IN_T);
-        vm.expectEmit(true, true, true, true, address(reactive));
+        vm.expectEmit(true, true, true, true, SYSTEM_ADDR);
         emit Callback(SEPOLIA_CHAIN_ID, address(hookH), CALLBACK_GAS_LIMIT, _backInRangePayload());
         reactive.exposed_handleTickUpdated(_tickLog(0)); // back in range
         _relayBackInRange();

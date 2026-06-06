@@ -11,7 +11,7 @@ pragma solidity ^0.8.26;
 // getPausableSubscriptions(). Naming per testing-strategy.md.
 
 import {IReactive} from "reactive-lib/src/interfaces/IReactive.sol";
-import {AbstractPausableReactive} from "reactive-lib/src/abstract-base/AbstractPausableReactive.sol";
+import {AbstractPausableReactive} from "../../src/base/AbstractPausableReactive.sol";
 
 import {BaseRangeGuardTest} from "../shared/BaseRangeGuardTest.t.sol";
 import {RangeGuardReactiveHarness} from "../harness/RangeGuardReactiveHarness.sol";
@@ -21,7 +21,7 @@ contract ReactivePauseResumeTest is BaseRangeGuardTest {
     RangeGuardReactiveHarness internal reactive;
     MockSystemContract internal sys;
 
-    address internal constant SERVICE_ADDR = 0x0000000000000000000000000000000000fffFfF;
+    address internal constant SERVICE_ADDR = 0x8888888888888888888888888888888888888888;
     // AbstractReactive.REACTIVE_IGNORE.
     uint256 internal constant REACTIVE_IGNORE = 0xa65f96fc951c35ead38878e0f0b7a3c744a6f5ccc1476b313353ce31712313ad;
 

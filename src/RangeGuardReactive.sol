@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.26;
+pragma solidity ^0.8.26;
 
-import {AbstractPausableReactive} from "reactive-lib/src/abstract-base/AbstractPausableReactive.sol";
+import {AbstractPausableReactive} from "./base/AbstractPausableReactive.sol";
+import {ISystemContract} from "reactive-lib/src/interfaces/ISystemContract.sol";
 
 /// @title RangeGuardReactive
 /// @notice Autonomous, event-driven automation layer for the RangeGuard Uniswap v4 hook, deployed on
@@ -130,11 +131,11 @@ contract RangeGuardReactive is AbstractPausableReactive {
 
         if (!vm) {
             // Cron heartbeat (ReactVM system contract).
-            service.subscribe(
-                block.chainid, address(service), _cronTopic, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
+            SYSTEM.subscribe(
+                block.chainid, address(SYSTEM), _cronTopic, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
             );
             // Hook events (host chain).
-            service.subscribe(
+            SYSTEM.subscribe(
                 _hookChainId,
                 _hookAddress,
                 POSITION_REGISTERED_TOPIC_0,
@@ -142,10 +143,10 @@ contract RangeGuardReactive is AbstractPausableReactive {
                 REACTIVE_IGNORE,
                 REACTIVE_IGNORE
             );
-            service.subscribe(
+            SYSTEM.subscribe(
                 _hookChainId, _hookAddress, TICK_UPDATED_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
             );
-            service.subscribe(
+            SYSTEM.subscribe(
                 _hookChainId, _hookAddress, POSITION_CLOSED_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
             );
         }
@@ -160,13 +161,13 @@ contract RangeGuardReactive is AbstractPausableReactive {
     ///         is the Cron heartbeat; otherwise dispatch on topic0. Unrecognized logs are ignored.
     /// @param  log  The intercepted log record delivered by the Reactive Network.
     function react(LogRecord calldata log) external override vmOnly {
-        if (log._contract == address(service)) {
+        if (log.contractAddress == address(SYSTEM)) {
             _handleHeartbeat();
-        } else if (log.topic_0 == POSITION_REGISTERED_TOPIC_0) {
+        } else if (log.topic0 == POSITION_REGISTERED_TOPIC_0) {
             _handlePositionRegistered(log);
-        } else if (log.topic_0 == TICK_UPDATED_TOPIC_0) {
+        } else if (log.topic0 == TICK_UPDATED_TOPIC_0) {
             _handleTickUpdated(log);
-        } else if (log.topic_0 == POSITION_CLOSED_TOPIC_0) {
+        } else if (log.topic0 == POSITION_CLOSED_TOPIC_0) {
             _handlePositionClosed(log);
         }
     }
@@ -187,7 +188,7 @@ contract RangeGuardReactive is AbstractPausableReactive {
         Subscription[] memory subs = new Subscription[](1);
         subs[0] = Subscription({
             chain_id: block.chainid,
-            _contract: address(service),
+            _contract: address(SYSTEM),
             topic_0: cronTopic,
             topic_1: REACTIVE_IGNORE,
             topic_2: REACTIVE_IGNORE,
@@ -200,8 +201,8 @@ contract RangeGuardReactive is AbstractPausableReactive {
     /// @dev    Indexed fields come from topics; the rest from `log.data`. `lastKnownInRange` mirrors
     ///         the hook's `_lastRangeEventInRange` init so the first transition fires correctly.
     function _handlePositionRegistered(LogRecord calldata log) internal {
-        bytes32 poolId = bytes32(log.topic_1);
-        bytes32 positionKey = bytes32(log.topic_2);
+        bytes32 poolId = bytes32(log.topic1);
+        bytes32 positionKey = bytes32(log.topic2);
 
         (int24 tickLower, int24 tickUpper,,,, int24 entryTick,,,) =
             abi.decode(log.data, (int24, int24, uint128, uint128, uint256, int24, uint32, uint256, uint256));
@@ -230,7 +231,7 @@ contract RangeGuardReactive is AbstractPausableReactive {
     ///         lands; if the hook's guard reverts (duplicate), this state is already correct and no
     ///         retry occurs.
     function _handleTickUpdated(LogRecord calldata log) internal {
-        bytes32 poolId = bytes32(log.topic_1);
+        bytes32 poolId = bytes32(log.topic1);
         (int24 newTick,) = abi.decode(log.data, (int24, uint256));
 
         uint256 len = activeKeys.length;
@@ -248,7 +249,14 @@ contract RangeGuardReactive is AbstractPausableReactive {
                 bytes memory payload = abi.encodeWithSignature(
                     "checkpointAndEmitOutOfRange(address,bytes32,bytes32)", address(0), poolId, positionKey
                 );
-                emit Callback(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload);
+                SYSTEM.requestCallbackV_1_0(
+                    ISystemContract.CallbackConfiguration_V_1_0({
+                        chainId: hookChainId,
+                        recipient: hookAddress,
+                        gasLimit: CALLBACK_GAS_LIMIT,
+                        payload: payload
+                    })
+                );
                 pos.lastKnownInRange = false;
                 emit RangeTransitionDetected(poolId, positionKey, false, block.timestamp);
             } else if (!pos.lastKnownInRange && isInRange) {
@@ -256,7 +264,14 @@ contract RangeGuardReactive is AbstractPausableReactive {
                 bytes memory payload = abi.encodeWithSignature(
                     "checkpointAndEmitBackInRange(address,bytes32,bytes32)", address(0), poolId, positionKey
                 );
-                emit Callback(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload);
+                SYSTEM.requestCallbackV_1_0(
+                    ISystemContract.CallbackConfiguration_V_1_0({
+                        chainId: hookChainId,
+                        recipient: hookAddress,
+                        gasLimit: CALLBACK_GAS_LIMIT,
+                        payload: payload
+                    })
+                );
                 pos.lastKnownInRange = true;
                 emit RangeTransitionDetected(poolId, positionKey, true, block.timestamp);
             }
@@ -268,8 +283,8 @@ contract RangeGuardReactive is AbstractPausableReactive {
     /// @dev    Marks inactive and swap-and-pops from `activeKeys`. The record is not deleted — the
     ///         heartbeat and tick handlers gate on `active`.
     function _handlePositionClosed(LogRecord calldata log) internal {
-        bytes32 poolId = bytes32(log.topic_1);
-        bytes32 positionKey = bytes32(log.topic_2);
+        bytes32 poolId = bytes32(log.topic1);
+        bytes32 positionKey = bytes32(log.topic2);
 
         if (!positions[positionKey].active) return; // dedup / unknown guard
 
@@ -296,7 +311,14 @@ contract RangeGuardReactive is AbstractPausableReactive {
             bytes memory payload = abi.encodeWithSignature(
                 "checkpointCallback(address,bytes32,bytes32)", address(0), pos.poolId, positionKey
             );
-            emit Callback(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload);
+            SYSTEM.requestCallbackV_1_0(
+                ISystemContract.CallbackConfiguration_V_1_0({
+                    chainId: hookChainId,
+                    recipient: hookAddress,
+                    gasLimit: CALLBACK_GAS_LIMIT,
+                    payload: payload
+                })
+            );
 
             pos.lastCheckpointTime = block.timestamp;
             count++;

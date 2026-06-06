@@ -27,11 +27,15 @@ The Reactive contract is deployed on ReactVM after the hook is deployed on
 the host chain (Sepolia/Unichain). It is initialized with the hook address
 and begins subscriptions immediately. No registration step is required on
 the hook — authorization is handled entirely by the Reactive Network's
-Callback Proxy (`authorizedSenderOnly` on the hook side via `AbstractCallback`).
+Callback Proxy (`onlyServiceProvider` on the hook side via `AbstractCallback`).
 
 **Inheritance:** `RangeGuardReactive` inherits from `AbstractPausableReactive`,
 which provides built-in owner-controlled pause/resume for the Cron10 heartbeat
-subscription — essential for managing rGas costs between demo sessions.
+subscription — essential for managing rGas costs between demo sessions. NOTE: the Omni
+`reactive-lib-omni` **removed** the upstream `AbstractPausableReactive` (and the
+`vm`/`detectVm` detection), so this is now a **local port** at
+`src/base/AbstractPausableReactive.sol` — behaviourally identical, but built on the new
+`AbstractReactive` and targeting the new system contract `SYSTEM` (`0x8888…8888`).
 
 **MVP scope:**
 Single ETH/USDC pool demo on Sepolia testnet. Naturally supports all pools
@@ -52,10 +56,10 @@ off-chain keeper infrastructure.
 ### Subscription Model
 
 A reactive contract declares its event subscriptions in its constructor by
-calling `service.subscribe()`:
+calling `SYSTEM.subscribe()`:
 
 ```solidity
-service.subscribe(
+SYSTEM.subscribe(
     chainId,          // source chain to monitor
     contractAddress,  // source contract address
     topic0,           // keccak256 of event signature
@@ -76,24 +80,29 @@ All incoming events are routed through one function:
 function react(LogRecord calldata log) external vmOnly;
 ```
 
-`LogRecord` contains: `chain_id`, `_contract`, `topic_0`–`topic_3` (all `uint256`),
-`data`, `block_number`, `op_code`, `block_hash`, `tx_hash`, `log_index` — note there is
-no `block_timestamp` field (handlers use the `block.timestamp` global). The `vmOnly`
-modifier ensures `react()` can only be called by the ReactVM runtime.
+`LogRecord` (reactive-lib-omni, camelCase fields) contains: `chainId`, `contractAddress`,
+`topic0`–`topic3` (all `uint256`), `data`, `blockNumber`, `opCode`, `blockHash`, `txHash`,
+`logIndex` — note there is no `blockTimestamp` field (handlers use the `block.timestamp`
+global). The `vmOnly` modifier (from the local `AbstractPausableReactive` port) ensures
+`react()` can only be called by the ReactVM runtime.
 
 ### Callback Mechanism
 
 When the reactive contract wants to call a function on the host chain,
-it emits a `Callback` event:
+it requests a callback through the Reactive system contract (Omni fork):
 
 ```solidity
-emit Callback(chainId, targetContract, gasLimit, payload);
+SYSTEM.requestCallbackV_1_0(ISystemContract.CallbackConfiguration_V_1_0({
+    chainId: targetChainId, recipient: targetContract, gasLimit: gasLimit, payload: payload
+}));
 ```
 
-The Reactive Network relayer picks up this event and routes the call
-through the official **Callback Proxy** (`0x0000000000000000000000000000000000fffFfF`)
-on the destination chain. From the hook's perspective, `msg.sender` is
-always the Callback Proxy — never the reactive contract directly.
+(The legacy `emit Callback(...)` event still exists in `IReactive` but is deprecated and
+unused.) The Reactive Network routes the call through the official **Callback Proxy** on the
+destination chain. From the hook's perspective, `msg.sender` is always that Callback Proxy —
+never the reactive contract directly. The proxy address is **per network**: for Reactive
+**Lasna** → Ethereum **Sepolia** it is `0xc9f36411C9897e7F959D99ffca2a0Ba7ee0D7bDA` (the Omni
+fork changed it from the legacy `0x…fffFfF`).
 
 ### RVM ID Placeholder Rule
 
@@ -113,9 +122,9 @@ bytes memory payload = abi.encodeWithSignature(
 
 ### Cron System Events
 
-The Callback Proxy address (`0x0000000000000000000000000000000000fffFfF`)
-also acts as the source of built-in Cron events on ReactVM, emitted at
-fixed block intervals:
+The Reactive system contract (`SYSTEM = 0x8888888888888888888888888888888888888888` on
+Lasna) is the source of built-in Cron events on ReactVM, emitted at fixed block intervals
+(the `react()` heartbeat route keys off `log.contractAddress == address(SYSTEM)`):
 
 | Event    | Frequency         | Approx Duration |
 | -------- | ----------------- | --------------- |
@@ -135,15 +144,17 @@ revert during local testing:
 
 ```solidity
 if (!vm) {
-    service.subscribe(...);
+    SYSTEM.subscribe(...);
 }
 ```
 
 ### Gas and rGas
 
-Each `Callback` emit incurs a minimum of 100,000 rGas on the Reactive
-Network. The reactive contract must maintain a positive rGas balance or
-Callbacks stop firing.
+Each dispatched callback (`SYSTEM.requestCallbackV_1_0`) incurs a minimum of 100,000 rGas on
+the Reactive Network (RangeGuard uses 300,000). rGas is charged per CALLBACK, not per
+`react()` execution — a no-op heartbeat with zero tracked positions spends nothing (verified
+on-chain). The reactive contract must maintain a positive rGas (lREACT) balance or callbacks
+stop firing.
 
 ---
 
@@ -194,10 +205,13 @@ automation.
 
 ### Key Design Decisions
 
-**AbstractPausableReactive inheritance.**
+**AbstractPausableReactive inheritance (local port under Omni).**
 `RangeGuardReactive` inherits from `AbstractPausableReactive` (not
-`AbstractReactive`). `AbstractPausableReactive` provides built-in
-`owner`, `paused` state, and `pause()`/`resume()` functions. Combined
+`AbstractReactive`). Because `reactive-lib-omni` removed the upstream
+`AbstractPausableReactive`, this is a **local port** at `src/base/AbstractPausableReactive.sol`
+(built on the new `AbstractReactive`, system contract `SYSTEM = 0x8888…8888`). It provides the
+same `owner`, `paused` state, `pause()`/`resume()`, the `Subscription` type, and the restored
+`vm`/`vmOnly`/`rnOnly` detection. Combined
 with `getPausableSubscriptions()` returning only the Cron10 subscription,
 this allows the operator to halt the heartbeat between demo sessions to
 conserve rGas — while keeping hook event subscriptions
@@ -209,10 +223,11 @@ used an `onlyReactive(poolId)` modifier. Research revealed this is
 architecturally incorrect — the hook's `msg.sender` is always the
 Callback Proxy, not the reactive contract. The hook cannot verify which
 specific reactive contract triggered a callback. `AbstractCallback`
-(from `reactive-lib`) provides the correct `authorizedSenderOnly`
-modifier, verifying only that the call arrived through the official
-Callback Proxy infrastructure. `setReactiveContract()` was removed
-entirely, simplifying the deployment sequence.
+(from `reactive-lib-omni`) provides the correct `onlyServiceProvider`
+modifier (which replaced the pre-Omni `authorizedSenderOnly`/`senders` ACL —
+semantically equivalent, both gating on "called by the Callback Proxy"), verifying
+only that the call arrived through the official Callback Proxy infrastructure.
+`setReactiveContract()` was removed entirely, simplifying the deployment sequence.
 
 **Combined checkpointAndEmit\* functions.**
 The original design called `checkpoint()` then `emitOutOfRange()` as
@@ -239,7 +254,7 @@ closed, not WHY.
 The heartbeat emits one `Callback` per active position per Cron10 cycle,
 capped at `MAX_POSITIONS_PER_CYCLE = 20`. Upgradeable to Pattern A
 (batch contract) without any hook changes since `checkpointCallback()`
-is `authorizedSenderOnly` and callable only via the Callback Proxy.
+is `onlyServiceProvider` and callable only via the Callback Proxy.
 
 ---
 
@@ -249,7 +264,8 @@ is `authorizedSenderOnly` and callable only via the Callback Proxy.
 
 **RangeGuardReactive.sol — ReactVM contract:**
 
-- Inherits `AbstractPausableReactive` from `reactive-lib`
+- Inherits `AbstractPausableReactive` (local port at `src/base/`; `reactive-lib-omni`
+  removed the upstream one)
 - Subscribes to three hook events on Sepolia: `PositionRegistered`,
   `TickUpdated`, `PositionClosed`
 - Subscribes to `Cron10` on ReactVM for periodic heartbeat
@@ -264,9 +280,9 @@ is `authorizedSenderOnly` and callable only via the Callback Proxy.
 **Hook changes required this session (retrofit to RangeGuardHook.sol):**
 
 - `AbstractCallback` inheritance + `_callbackSender` constructor arg
-- `checkpointCallback(address, PoolId, bytes32)` — new authorizedSenderOnly function
-- `checkpointAndEmitOutOfRange(address, PoolId, bytes32)` — new authorizedSenderOnly
-- `checkpointAndEmitBackInRange(address, PoolId, bytes32)` — new authorizedSenderOnly
+- `checkpointCallback(address, PoolId, bytes32)` — new onlyServiceProvider function
+- `checkpointAndEmitOutOfRange(address, PoolId, bytes32)` — new onlyServiceProvider
+- `checkpointAndEmitBackInRange(address, PoolId, bytes32)` — new onlyServiceProvider
 - `_lastRangeEventInRange` mapping + initialization in `afterAddLiquidity`
 - `PositionClosed` event + emission in `afterRemoveLiquidity` on all paths
 - Remove `reactiveContract[poolId]` and `_reactiveSet[poolId]` mappings
@@ -318,23 +334,27 @@ during implementation without a spec amendment.
 ---
 
 **A. Contract Inheritance**
-`RangeGuardReactive` inherits from `AbstractPausableReactive` (reactive-lib).
-This provides `owner`, `paused` state, `pause()`/`resume()` functions, and
+`RangeGuardReactive` inherits from `AbstractPausableReactive` — a **local port** at
+`src/base/AbstractPausableReactive.sol` (the Omni `reactive-lib-omni` removed the upstream
+one). This provides `owner`, `paused` state, `pause()`/`resume()` functions, and
 `getPausableSubscriptions()`. The Cron10 subscription is declared pausable
 via `getPausableSubscriptions()`, allowing the operator to halt the heartbeat
 between demo sessions while keeping hook event subscriptions always active.
 
 **B. Hook Authorization via AbstractCallback**
-`RangeGuardHook` inherits from `AbstractCallback` (reactive-lib).
-`authorizedSenderOnly` (provided by AbstractCallback) replaces any custom
-`onlyReactive` modifier. The hook verifies only that `msg.sender` equals
-the Callback Proxy — it cannot and does not verify which specific Reactive
-contract triggered the call.
+`RangeGuardHook` inherits from `AbstractCallback` (reactive-lib-omni).
+`onlyServiceProvider` (provided by `AbstractPayer` under `AbstractCallback`) replaces the
+pre-Omni `authorizedSenderOnly` ACL and any custom `onlyReactive` modifier. The hook verifies
+only that `msg.sender` equals the Callback Proxy — it cannot and does not verify which specific
+Reactive contract triggered the call.
 
-**C. Callback Proxy Address**
-`0x0000000000000000000000000000000000fffFfF` — consistent across all
-Reactive Network testnets. Passed as `_callbackSender` to the hook
-constructor and stored by `AbstractCallback`.
+**C. Callback Proxy Address (per network — Omni fork changed this)**
+For Reactive **Lasna** → Ethereum **Sepolia**:
+`0xc9f36411C9897e7F959D99ffca2a0Ba7ee0D7bDA` (no longer the legacy `0x…fffFfF`; source:
+dev.reactive.network/origins-and-destinations). Passed as `_callbackSender` to the hook
+constructor and stored by `AbstractCallback` as both the `_SERVICE_PROVIDER` (payment vendor)
+and the authorized callback sender. Distinct from the Lasna system contract
+(`SYSTEM = 0x8888…8888`) and the Sepolia lREACT faucet (`0x9b9BB25f…Cf434`).
 
 **D. RVM ID Placeholder Rule**
 Every hook function callable from a Reactive contract must accept a leading
@@ -377,7 +397,7 @@ Both are passed as constructor arguments, matched to the deployment target:
 
 **J. checkpointCallback() as RVM Entry Point**
 A dedicated `checkpointCallback(address, PoolId, bytes32)` function on the
-hook serves as the Reactive heartbeat entry point. It is `authorizedSenderOnly`
+hook serves as the Reactive heartbeat entry point. It is `onlyServiceProvider`
 — only callable via the Callback Proxy. The existing `checkpoint(PoolId, bytes32)`
 (no sender param, no access restriction) is preserved for permissionless
 direct callers (keepers, LPs, manual).
@@ -402,7 +422,7 @@ naturally supports all pools managed by that hook — `PositionInfo` stores
 `poolId` and all callbacks include the correct pool scope.
 
 **O. if (!vm) Subscription Guard**
-All `service.subscribe()` calls are wrapped in `if (!vm)` to allow local
+All `SYSTEM.subscribe()` calls are wrapped in `if (!vm)` to allow local
 Foundry testing without reverting on subscription setup.
 
 **P. topic0 Constants**
@@ -453,9 +473,9 @@ uint256 internal constant POSITION_REGISTERED_TOPIC_0 = uint256(keccak256(
 **LogRecord field mapping:**
 | Field | Source |
 |-------|--------|
-| poolId | `bytes32(log.topic_1)` |
-| positionKey | `bytes32(log.topic_2)` |
-| owner | `address(uint160(uint256(log.topic_3)))` |
+| poolId | `bytes32(log.topic1)` |
+| positionKey | `bytes32(log.topic2)` |
+| owner | `address(uint160(uint256(log.topic3)))` |
 | tickLower, tickUpper, entryAmt0, entryAmt1, entryNotionalStable, entryTick, depositTime, coverageApr, secondsPerYear | `abi.decode(log.data, (int24, int24, uint128, uint128, uint256, int24, uint32, uint256, uint256))` |
 
 **Fields used by Reactive contract:**
@@ -470,7 +490,7 @@ uint256 internal constant POSITION_REGISTERED_TOPIC_0 = uint256(keccak256(
 **Subscription:**
 
 ```solidity
-service.subscribe(
+SYSTEM.subscribe(
     hookChainId, hookAddress,
     POSITION_REGISTERED_TOPIC_0,
     REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
@@ -505,13 +525,13 @@ uint256 internal constant TICK_UPDATED_TOPIC_0 = uint256(keccak256(
 **LogRecord field mapping:**
 | Field | Source |
 |-------|--------|
-| poolId | `bytes32(log.topic_1)` |
+| poolId | `bytes32(log.topic1)` |
 | newTick, timestamp | `abi.decode(log.data, (int24, uint256))` |
 
 **Subscription:**
 
 ```solidity
-service.subscribe(
+SYSTEM.subscribe(
     hookChainId, hookAddress,
     TICK_UPDATED_TOPIC_0,
     REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
@@ -546,14 +566,14 @@ uint256 internal constant POSITION_CLOSED_TOPIC_0 = uint256(keccak256(
 **LogRecord field mapping:**
 | Field | Source |
 |-------|--------|
-| poolId | `bytes32(log.topic_1)` |
-| positionKey | `bytes32(log.topic_2)` |
+| poolId | `bytes32(log.topic1)` |
+| positionKey | `bytes32(log.topic2)` |
 | owner | `abi.decode(log.data, (address))` |
 
 **Subscription:**
 
 ```solidity
-service.subscribe(
+SYSTEM.subscribe(
     hookChainId, hookAddress,
     POSITION_CLOSED_TOPIC_0,
     REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
@@ -567,7 +587,7 @@ service.subscribe(
 **Purpose:** Periodic heartbeat trigger for driving `checkpointCallback()`
 on all active tracked positions.
 
-**Source:** Emitted by the system contract at `address(service)` on ReactVM.
+**Source:** Emitted by the system contract at `address(SYSTEM)` on ReactVM.
 
 - Demo: Cron10 (~1 minute)
 - Mainnet: Cron1000 (~2 hours)
@@ -577,9 +597,9 @@ on all active tracked positions.
 **Subscription:**
 
 ```solidity
-service.subscribe(
+SYSTEM.subscribe(
     block.chainid,       // ReactVM chain
-    address(service),    // system contract
+    address(SYSTEM),    // system contract
     _cronTopic,          // Cron10 (demo) or Cron1000 (mainnet)
     REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
 );
@@ -598,9 +618,10 @@ character mismatch will cause the subscription to never fire.
 ## 7. Hook Functions Called by Reactive Contract
 
 The Reactive contract triggers three functions on the hook via
-`emit Callback(...)`. All three use `CALLBACK_GAS_LIMIT = 300_000`.
+`SYSTEM.requestCallbackV_1_0(...)` (Omni fork; the deprecated `emit Callback(...)` is no
+longer used). All three use `CALLBACK_GAS_LIMIT = 300_000`.
 All three require `address(0)` as the first payload argument (RVM ID
-placeholder — see §5D). All three are `authorizedSenderOnly`.
+placeholder — see §5D). All three are `onlyServiceProvider`.
 
 Note: `PoolId` is a user-defined value type wrapping `bytes32`. In ABI
 encoding and signature strings it must be expressed as `bytes32`.
@@ -620,10 +641,10 @@ function checkpointCallback(
     address /* sender */,   // RVM ID placeholder — ignored
     PoolId   poolId,
     bytes32  positionKey
-) external authorizedSenderOnly
+) external onlyServiceProvider
 ```
 
-**Access control:** `authorizedSenderOnly` — only Callback Proxy.
+**Access control:** `onlyServiceProvider` — only Callback Proxy.
 **Rate-limited:** Yes — reverts `CheckpointTooSoon` if
 `block.timestamp - lastAccrualTime < minCheckpointInterval`.
 
@@ -636,7 +657,7 @@ bytes memory payload = abi.encodeWithSignature(
     pos.poolId,
     positionKey
 );
-emit Callback(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload);
+SYSTEM.requestCallbackV_1_0(ISystemContract.CallbackConfiguration_V_1_0(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload));
 ```
 
 **Hook behavior on success:**
@@ -660,10 +681,10 @@ function checkpointAndEmitOutOfRange(
     address /* sender */,   // RVM ID placeholder — ignored
     PoolId   poolId,
     bytes32  positionKey
-) external authorizedSenderOnly
+) external onlyServiceProvider
 ```
 
-**Access control:** `authorizedSenderOnly`. **Rate-limited:** No.
+**Access control:** `onlyServiceProvider`. **Rate-limited:** No.
 
 **Callback payload encoding:**
 
@@ -672,7 +693,7 @@ bytes memory payload = abi.encodeWithSignature(
     "checkpointAndEmitOutOfRange(address,bytes32,bytes32)",
     address(0), poolId, positionKey
 );
-emit Callback(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload);
+SYSTEM.requestCallbackV_1_0(ISystemContract.CallbackConfiguration_V_1_0(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload));
 ```
 
 **Hook behavior on success:**
@@ -697,10 +718,10 @@ function checkpointAndEmitBackInRange(
     address /* sender */,   // RVM ID placeholder — ignored
     PoolId   poolId,
     bytes32  positionKey
-) external authorizedSenderOnly
+) external onlyServiceProvider
 ```
 
-**Access control:** `authorizedSenderOnly`. **Rate-limited:** No.
+**Access control:** `onlyServiceProvider`. **Rate-limited:** No.
 
 **Callback payload encoding:**
 
@@ -709,7 +730,7 @@ bytes memory payload = abi.encodeWithSignature(
     "checkpointAndEmitBackInRange(address,bytes32,bytes32)",
     address(0), poolId, positionKey
 );
-emit Callback(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload);
+SYSTEM.requestCallbackV_1_0(ISystemContract.CallbackConfiguration_V_1_0(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload));
 ```
 
 **Hook behavior on success:**
@@ -838,43 +859,52 @@ uint256 internal constant POSITION_CLOSED_TOPIC_0 = uint256(keccak256(
 
 ## 9. Dependencies and Imports
 
-### 9.1 Adding reactive-lib to the Project
+### 9.1 reactive-lib-omni dependency (vendored)
 
-```bash
-forge install Reactive-Network/reactive-lib
+The project uses the **Omni fork** library (`reactive-lib-omni` v0.1.0 `@3ade0dc`), not the legacy
+`reactive-lib`. Its `src/` is **vendored** — committed directly into `lib/reactive-lib-omni/`
+(NOT a git submodule, matching how `forge-std`/`v4-hooks-public` are tracked here) — so a fresh
+`git clone` builds with no submodule init. See `lib/reactive-lib-omni/VENDORED.md`.
+
+`remappings.txt`:
+
+```
+reactive-lib/=lib/reactive-lib-omni/
 ```
 
-Add to `foundry.toml` or `remappings.txt`:
-
-```toml
-remappings = [
-    "reactive-lib/=lib/reactive-lib/",
-]
-```
+> **Pragma:** upstream sources are `pragma ^0.8.29`, but the project (and v4-core's `PoolManager`)
+> compile on `0.8.26`. Since the lib uses no 0.8.27+ features, the 8 vendored files are relaxed to
+> `^0.8.26`. Because they're committed (not a submodule), this persists across clones; the re-apply
+> one-liner only matters if re-vendoring from upstream:
+> `find lib/reactive-lib-omni/src -name '*.sol' -exec sed -i '' 's/\^0\.8\.29;/^0.8.26;/' {} +`
 
 ---
 
 ### 9.2 RangeGuardReactive.sol Imports
 
 ```solidity
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity >=0.8.0;
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.26;
 
-import {AbstractPausableReactive} from
-    "reactive-lib/src/abstract-base/AbstractPausableReactive.sol";
+// AbstractPausableReactive is a LOCAL port (the Omni lib removed the upstream one).
+import {AbstractPausableReactive} from "./base/AbstractPausableReactive.sol";
+// ISystemContract supplies the CallbackConfiguration_V_1_0 struct for requestCallbackV_1_0.
+import {ISystemContract} from "reactive-lib/src/interfaces/ISystemContract.sol";
 ```
 
-`AbstractPausableReactive` provides:
+The local `AbstractPausableReactive` (inheriting Omni's `AbstractReactive`) provides:
 
 - `AbstractReactive` base (IReactive + AbstractPayer)
-- `service` — Reactive Network service contract instance
+- `SYSTEM` — Reactive Network system contract constant (`0x8888…8888`); use for
+  `subscribe`/`unsubscribe`/`requestCallbackV_1_0` (the old `service` field was removed upstream)
 - `REACTIVE_IGNORE` — constant for unfiltered topic subscriptions
-- `vm` — bool flag; `true` when running outside ReactVM
-- `vmOnly` — modifier restricting `react()` to ReactVM execution only
+- `vm` — bool flag; `true` when running outside ReactVM (restored by the local port)
+- `vmOnly` / `rnOnly` — modifiers restoring the ReactVM / Reactive-Network gating
 - `owner` — deployer address
 - `paused` — boolean pause state
 - `pause()` / `resume()` — owner-controlled
 - `getPausableSubscriptions()` — override to define pausable subscriptions
+- `Subscription` — the struct type (snake_case fields, decoupled from the renamed `LogRecord`)
 
 ---
 
@@ -882,7 +912,7 @@ import {AbstractPausableReactive} from
 
 ```solidity
 import {AbstractCallback} from
-    "reactive-lib/src/abstract-base/AbstractCallback.sol";
+    "reactive-lib/src/base/AbstractCallback.sol";
 ```
 
 ---
@@ -948,22 +978,22 @@ contract RangeGuardReactive is AbstractPausableReactive {
 
         if (!vm) {
             // Cron heartbeat (ReactVM)
-            service.subscribe(
-                block.chainid, address(service), _cronTopic,
+            SYSTEM.subscribe(
+                block.chainid, address(SYSTEM), _cronTopic,
                 REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
             );
             // Hook events (Sepolia)
-            service.subscribe(
+            SYSTEM.subscribe(
                 _hookChainId, _hookAddress,
                 POSITION_REGISTERED_TOPIC_0,
                 REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
             );
-            service.subscribe(
+            SYSTEM.subscribe(
                 _hookChainId, _hookAddress,
                 TICK_UPDATED_TOPIC_0,
                 REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
             );
-            service.subscribe(
+            SYSTEM.subscribe(
                 _hookChainId, _hookAddress,
                 POSITION_CLOSED_TOPIC_0,
                 REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
@@ -984,7 +1014,7 @@ contract RangeGuardReactive is AbstractPausableReactive {
         Subscription[] memory subs = new Subscription[](1);
         subs[0] = Subscription(
             block.chainid,
-            address(service),
+            address(SYSTEM),
             cronTopic,
             REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
         );
@@ -1026,8 +1056,8 @@ Signal to begin tracking the position for range detection and heartbeat.
 
 ```solidity
 function _handlePositionRegistered(LogRecord calldata log) internal {
-    bytes32 poolId      = bytes32(log.topic_1);
-    bytes32 positionKey = bytes32(log.topic_2);
+    bytes32 poolId      = bytes32(log.topic1);
+    bytes32 positionKey = bytes32(log.topic2);
 
     (
         int24 tickLower,
@@ -1085,7 +1115,7 @@ transition detection.
 
 ```solidity
 function _handleTickUpdated(LogRecord calldata log) internal {
-    bytes32 poolId = bytes32(log.topic_1);
+    bytes32 poolId = bytes32(log.topic1);
     (int24 newTick, ) = abi.decode(log.data, (int24, uint256));
 
     uint256 len = activeKeys.length;
@@ -1104,7 +1134,7 @@ function _handleTickUpdated(LogRecord calldata log) internal {
                 "checkpointAndEmitOutOfRange(address,bytes32,bytes32)",
                 address(0), poolId, positionKey
             );
-            emit Callback(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload);
+            SYSTEM.requestCallbackV_1_0(ISystemContract.CallbackConfiguration_V_1_0(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload));
             pos.lastKnownInRange = false;
             emit RangeTransitionDetected(poolId, positionKey, false, block.timestamp);
 
@@ -1114,7 +1144,7 @@ function _handleTickUpdated(LogRecord calldata log) internal {
                 "checkpointAndEmitBackInRange(address,bytes32,bytes32)",
                 address(0), poolId, positionKey
             );
-            emit Callback(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload);
+            SYSTEM.requestCallbackV_1_0(ISystemContract.CallbackConfiguration_V_1_0(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload));
             pos.lastKnownInRange = true;
             emit RangeTransitionDetected(poolId, positionKey, true, block.timestamp);
         }
@@ -1149,8 +1179,8 @@ settlement path. Signal to stop tracking the position.
 
 ```solidity
 function _handlePositionClosed(LogRecord calldata log) internal {
-    bytes32 poolId      = bytes32(log.topic_1);
-    bytes32 positionKey = bytes32(log.topic_2);
+    bytes32 poolId      = bytes32(log.topic1);
+    bytes32 positionKey = bytes32(log.topic2);
 
     if (!positions[positionKey].active) return;
 
@@ -1255,7 +1285,7 @@ function _handleHeartbeat() internal {
             pos.poolId,
             positionKey
         );
-        emit Callback(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload);
+        SYSTEM.requestCallbackV_1_0(ISystemContract.CallbackConfiguration_V_1_0(hookChainId, hookAddress, CALLBACK_GAS_LIMIT, payload));
 
         pos.lastCheckpointTime = block.timestamp;
         count++;
@@ -1343,7 +1373,7 @@ the production recovery pattern.
 
 ### 15.1 Hook-Side Authorization
 
-`authorizedSenderOnly` (AbstractCallback) verifies `msg.sender ==
+`onlyServiceProvider` (AbstractCallback) verifies `msg.sender ==
 callbackSender` (Callback Proxy). The hook cannot verify which specific
 Reactive contract triggered a callback. This is acceptable because the
 reactive-callable functions cannot move funds or modify PoolConfig.
@@ -1354,7 +1384,7 @@ reactive-callable functions cannot move funds or modify PoolConfig.
 | ------------------------------ | --------------------------- | ----------------------------------- |
 | `checkpointCallback`           | `CheckpointTooSoon`         | Prevents spam accrual               |
 | `checkpointCallback`           | `PositionNotActive`         | Prevents calls on settled positions |
-| `checkpointCallback`           | `authorizedSenderOnly`      | Restricts to Callback Proxy         |
+| `checkpointCallback`           | `onlyServiceProvider`      | Restricts to Callback Proxy         |
 | `checkpointAndEmitOutOfRange`  | `PositionAlreadyOutOfRange` | Prevents duplicate events           |
 | `checkpointAndEmitBackInRange` | `PositionAlreadyInRange`    | Prevents duplicate events           |
 | All three                      | `PositionNotActive`         | Prevents calls on settled positions |
@@ -1478,7 +1508,7 @@ All existing 210 tests must continue passing after hook changes.
 
 - [ ] `RangeGuardHook` constructor accepts `address _callbackSender` as third arg
 - [ ] `AbstractCallback` correctly inherited
-- [ ] `authorizedSenderOnly` gates all three reactive functions
+- [ ] `onlyServiceProvider` gates all three reactive functions
 
 **Removed state:**
 
@@ -1488,14 +1518,14 @@ All existing 210 tests must continue passing after hook changes.
 
 **New functions (all with `address /*sender*/` first param):**
 
-- [ ] `checkpointCallback(address, PoolId, bytes32)` — `authorizedSenderOnly`,
+- [ ] `checkpointCallback(address, PoolId, bytes32)` — `onlyServiceProvider`,
       same gates as `checkpoint()`, emits `AccrualUpdated` + `Checkpointed`
 - [ ] `checkpointAndEmitOutOfRange(address, PoolId, bytes32)` —
-      `authorizedSenderOnly`, not rate-limited, reverts
+      `onlyServiceProvider`, not rate-limited, reverts
       `PositionAlreadyOutOfRange` on duplicate, emits `AccrualUpdated` +
       `PositionOutOfRange`
 - [ ] `checkpointAndEmitBackInRange(address, PoolId, bytes32)` —
-      `authorizedSenderOnly`, not rate-limited, reverts
+      `onlyServiceProvider`, not rate-limited, reverts
       `PositionAlreadyInRange` on duplicate, emits `AccrualUpdated` +
       `PositionBackInRange`
 
@@ -1528,7 +1558,7 @@ All existing 210 tests must continue passing after hook changes.
 
 **react() routing:**
 
-- [ ] `log._contract == address(service)` → `_handleHeartbeat`
+- [ ] `log.contractAddress == address(SYSTEM)` → `_handleHeartbeat`
 - [ ] `POSITION_REGISTERED_TOPIC_0` → `_handlePositionRegistered`
 - [ ] `TICK_UPDATED_TOPIC_0` → `_handleTickUpdated`
 - [ ] `POSITION_CLOSED_TOPIC_0` → `_handlePositionClosed`
@@ -1634,9 +1664,9 @@ Compare event parameter types against the constants in §8.5.
 
 ### 18.2 AbstractPausableReactive Pause/Resume Events
 
-Verify whether `AbstractPausableReactive` emits its own pause/resume
-events by inspecting `reactive-lib` source. If it does, do not add
-duplicate events in `RangeGuardReactive`.
+RESOLVED: `AbstractPausableReactive` is now a local port (`src/base/`), so its events are
+under our control — it emits no pause/resume events; `pause()`/`resume()` only flip `paused`
+and (un)subscribe via `SYSTEM`.
 
 ### 18.3 Cron Topic Values
 
@@ -1671,9 +1701,12 @@ Out of MVP scope.
 
 ### 18.6 vm Flag in Foundry Tests
 
-Review `reactive-lib` test utilities for the correct pattern to simulate
-`LogRecord` structs and call `react()` in a Foundry environment before
-writing Reactive contract tests.
+RESOLVED: tests etch a `MockSystemContract` at `SYSTEM` (`0x8888…8888`). For the reactive
+handler tests, the mock is etched **after** constructing the harness, so `detectVm()` (run in
+the constructor) still sets `vm == true` (keeping `react()` callable and skipping constructor
+subscriptions), while the mock is present afterward so the handlers' `SYSTEM.requestCallbackV_1_0`
+dispatch succeeds (the mock re-emits the legacy `Callback` event so log-matching assertions
+hold). Pause/resume tests etch it **before** construction (so `vm == false`, the `rnOnly` path).
 
 ### 18.7 rGas Funding Mechanism
 
@@ -1687,20 +1720,23 @@ Verify the exact funding mechanism with Reactive Network documentation:
 
 For >20 positions: emit one Callback per Cron cycle to a
 `RangeGuardBatchCheckpoint` contract on Sepolia. `checkpointCallback()`
-is `authorizedSenderOnly` — the batch contract must also call through
+is `onlyServiceProvider` — the batch contract must also call through
 the Callback Proxy. Alternatively, use the permissionless `checkpoint()`
 from a batch contract. No hook changes required.
 
-### 18.9 Mainnet Callback Proxy Address
+### 18.9 Callback Proxy Address — Per Network (Omni fork)
 
-Confirm `0x0000000000000000000000000000000000fffFfF` on mainnet before
-deploying `RangeGuardHook` with `_callbackSender`.
+The Callback Proxy is **per network**, not the legacy `0x…fffFfF`. Always confirm the
+host-chain proxy for your target Reactive network at
+dev.reactive.network/origins-and-destinations before deploying `RangeGuardHook` with
+`_callbackSender`. Confirmed for the demo (Reactive Lasna → Ethereum Sepolia):
+`0xc9f36411C9897e7F959D99ffca2a0Ba7ee0D7bDA`.
 
 ### 18.10 Docs Updated After This Session
 
 | Document                        | Change needed                                    |
 | ------------------------------- | ------------------------------------------------ |
-| spec.md §8 function summary     | `checkpointCallback` → `authorizedSenderOnly`    |
+| spec.md §8 function summary     | `checkpointCallback` → `onlyServiceProvider`    |
 | context.md §11                  | `AbstractPausableReactive`, updated descriptions |
 | CLAUDE.md Current Session State | Workstream 2 updated                             |
 | project-status.md Phase 3B      | Reactive contract bullet updated                 |

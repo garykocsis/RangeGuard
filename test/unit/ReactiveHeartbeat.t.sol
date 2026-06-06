@@ -37,7 +37,7 @@ contract ReactiveHeartbeatTest is ReactiveTestBase {
         _register(key);
         vm.warp(REACT_TS + MIN_INTERVAL);
 
-        vm.expectEmit(true, true, true, true, address(reactive));
+        vm.expectEmit(true, true, true, true, SYSTEM_ADDR);
         emit Callback(SEPOLIA_CHAIN_ID, hookAddr, CALLBACK_GAS_LIMIT, _checkpointPayload(POOL, key));
         vm.expectEmit(true, true, false, true, address(reactive));
         emit HeartbeatCheckpointFired(POOL, key, REACT_TS + MIN_INTERVAL);
