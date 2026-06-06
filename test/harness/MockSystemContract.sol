@@ -24,9 +24,7 @@ contract MockSystemContract {
     uint256 public callbackRequests;
 
     /// @dev Mirrors the legacy IReactive.Callback event so test log-matching is unchanged.
-    event Callback(
-        uint256 indexed chain_id, address indexed _contract, uint64 indexed gas_limit, bytes payload
-    );
+    event Callback(uint256 indexed chain_id, address indexed _contract, uint64 indexed gas_limit, bytes payload);
 
     function subscribe(uint256, address, uint256, uint256, uint256, uint256) external {
         subscribeCalls++;

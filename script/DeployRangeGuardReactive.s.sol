@@ -55,8 +55,7 @@ contract DeployRangeGuardReactive is Script {
     address internal constant DEFAULT_HOOK_ADDRESS = 0x50cd0E7e046022a9B359ca8725aCb75748FB67C0;
 
     // Cron10 system-event topic0 on Lasna (2-min demo heartbeat cadence).
-    uint256 internal constant DEFAULT_CRON_TOPIC =
-        0x04463f7c1651e6b9774d7f85c85bb94654e3c46ca79b0c16fb16d4183307b687;
+    uint256 internal constant DEFAULT_CRON_TOPIC = 0x04463f7c1651e6b9774d7f85c85bb94654e3c46ca79b0c16fb16d4183307b687;
 
     // Default host chain for the MVP demo (Sepolia). Override via HOOK_CHAIN_ID for other host chains.
     uint256 internal constant DEFAULT_HOOK_CHAIN_ID = 11155111;
