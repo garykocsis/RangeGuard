@@ -26,7 +26,7 @@ contract ReactiveTickUpdatedTest is ReactiveTestBase {
         bytes32 key = bytes32(uint256(1));
         _register(key, -100, 100, 0); // in range
 
-        vm.expectEmit(true, true, true, true, address(reactive));
+        vm.expectEmit(true, true, true, true, SYSTEM_ADDR);
         emit Callback(SEPOLIA_CHAIN_ID, hookAddr, CALLBACK_GAS_LIMIT, _outOfRangePayload(POOL, key));
         vm.expectEmit(true, true, false, true, address(reactive));
         emit RangeTransitionDetected(POOL, key, false, REACT_TS);
@@ -41,7 +41,7 @@ contract ReactiveTickUpdatedTest is ReactiveTestBase {
         bytes32 key = bytes32(uint256(1));
         _register(key, 100, 200, 0); // tick 0 below -> out
 
-        vm.expectEmit(true, true, true, true, address(reactive));
+        vm.expectEmit(true, true, true, true, SYSTEM_ADDR);
         emit Callback(SEPOLIA_CHAIN_ID, hookAddr, CALLBACK_GAS_LIMIT, _backInRangePayload(POOL, key));
         vm.expectEmit(true, true, false, true, address(reactive));
         emit RangeTransitionDetected(POOL, key, true, REACT_TS);
@@ -114,7 +114,7 @@ contract ReactiveTickUpdatedTest is ReactiveTestBase {
         bytes32 key = bytes32(uint256(1));
         alt.exposed_handlePositionRegistered(_registeredLog(POOL, key, -100, 100, 0)); // in range
 
-        vm.expectEmit(true, true, true, true, address(alt));
+        vm.expectEmit(true, true, true, true, SYSTEM_ADDR);
         emit Callback(altChain, hookAddr, CALLBACK_GAS_LIMIT, _outOfRangePayload(POOL, key));
         alt.exposed_handleTickUpdated(_tickLog(POOL, 500)); // transition out -> Callback to altChain
     }

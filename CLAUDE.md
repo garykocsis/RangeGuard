@@ -64,8 +64,9 @@ Completed (Phase 3B — Reactive Network):
 - RangeGuardReactive.sol (AbstractPausableReactive on ReactVM; 4 subscriptions; react() routing;
   four handlers; pausable Cron-only; hookChainId-parameterized destination chain; 4-arg ctor)
 - reactive-lib v0.2.0 + remappings.txt; DeployRangeGuardReactive.s.sol; 278 tests passing
+  (NOTE: superseded in Session 12 — migrated to reactive-lib-omni v0.1.0; see Current Session State)
 
-Completed (Phase 3B — continued, Session 11):
+Completed (Phase 3B — continued, Session 11; HOOK SUPERSEDED by the Session-12 Lasna redeploy):
 
 - Sepolia HOOK deployment: hook 0x50cd0E7e046022a9B359ca8725aCb75748FB67C0 live; MockUSDC token1
   0x04feCef5110c5e52794fdA3D935BC2Cc0ee428CA (6-dec, permissionless mint, TESTNET ONLY);
@@ -73,16 +74,18 @@ Completed (Phase 3B — continued, Session 11):
   ($2,000/ETH), DYNAMIC_FEE_FLAG, tickSpacing 60; buffer seeded 10,000 USDC real custody (verified).
   New artifacts: src/mocks/MockUSDC.sol, script/DeployMockUSDC.s.sol, script/StageInitSeedPool.s.sol,
   HelperConfig getStableToken()/MOCK_USDC_SEPOLIA. See docs/session-11-sepolia-deployment.md.
+  (Session 12 redeployed the hook for Lasna as 0xFead…a7C0 with the new Sepolia callback proxy;
+  MockUSDC was reused. The 0x50cd… hook is no longer the active deployment.)
 
 Current implementation target:
 
-- ReactVM (reactive) deployment, then demo script
+- Demo script (RangeGuardDemo.s.sol) — drive the live Sepolia pool end-to-end, then frontend dashboard
 
 Upcoming implementation order:
 
-1. Sepolia hook deployment ✅ (Session 11 — hook live, pool seeded)
-2. ReactVM (reactive) deployment ← current (confirm Cron topic + rGas + Callback Proxy first)
-3. Demo script (RangeGuardDemo.s.sol)
+1. Sepolia hook deployment ✅ (Session 11; REDEPLOYED for Lasna in Session 12 — new hook 0xFead…a7C0)
+2. ReactVM (reactive) deployment ✅ (Session 12 — Reactive Lasna 0xC0e6…B70b, live + wired + verified)
+3. Demo script (RangeGuardDemo.s.sol) ← current
 4. Frontend dashboard
 
 ---
@@ -357,42 +360,50 @@ At the start of every session, Claude must:
 
 # Current Session State
 
-Last completed (Session 11): First live Ethereum Sepolia HOOK deployment — MockUSDC → hook →
-pool staged → initialized → buffer seeded, all verified on-chain. Hook
-0x50cd0E7e046022a9B359ca8725aCb75748FB67C0; MockUSDC 0x04feCef5110c5e52794fdA3D935BC2Cc0ee428CA;
-PoolId 0xe531d42027094e6563d0838d0fe1c8705172d4feed0e6a5f48a08ca97f2b81cb; owner/admin
-0x193D1F3E085efc80e1027891FaA770E81ECC4A1d. Buffer = 10,000 USDC real custody. No production hook
-source changed (new testnet mock + 2 deploy scripts + HelperConfig getter only). 278 tests passing.
-See docs/session-11-sepolia-deployment.md.
-Current target: ReactVM (reactive) deployment, then demo script.
+Last completed (Session 12): reactive-lib → reactive-lib-omni (Omni fork) migration + first live
+ReactVM deployment on Reactive Lasna. The whole reactive stack is live and verified; the only
+remaining piece is the demo script (LP-deposit + swap tooling) to drive the round-trip end-to-end.
 
-Delivered this session:
+Library migration (reactive-lib v0.2.0 → reactive-lib-omni v0.1.0):
 
-- RangeGuardHook: BaseHook + AbstractCallback (authorizedSenderOnly = Callback Proxy 0x..fffFfF);
-  3-arg constructor (IPoolManager, owner, \_callbackSender); checkpointCallback /
-  checkpointAndEmitOutOfRange / checkpointAndEmitBackInRange (leading ignored RVM-ID placeholder);
-  \_lastRangeEventInRange alternation guard (init in afterAddLiquidity); PositionClosed /
-  PositionOutOfRange / PositionBackInRange events; PositionAlreadyOutOfRange/InRange errors;
-  reactiveContract / \_reactiveSet / setReactiveContract removed.
-- RangeGuardReactive.sol: AbstractPausableReactive on ReactVM; constructor
-  (address \_hookAddress, uint256 \_hookChainId, uint256 \_cronTopic, uint256 \_minCheckpointInterval)
-  payable; four if(!vm) subscriptions; react() vmOnly routes by source (service → heartbeat,
-  else topic0); four handlers; getPausableSubscriptions returns Cron only; activeKeys swap-and-pop;
-  MAX_POSITIONS_PER_CYCLE=20; CALLBACK_GAS_LIMIT=300_000; address(0) first arg in every payload.
-- Infra: reactive-lib v0.2.0 (remappings.txt: reactive-lib/=lib/reactive-lib/);
-  DeployRangeGuardReactive.s.sol (ReactVM, env-driven, dry-run verified);
-  RangeGuardReactiveHarness + MockSystemContract + ReactiveTestBase.
+- onlyServiceProvider (was authorizedSenderOnly); SYSTEM.requestCallbackV_1_0 (was emit Callback);
+  SYSTEM 0x8888…8888 (was service 0x…fffFfF); camelCase LogRecord (contractAddress, topic0…3);
+  AbstractCallback ctor now (IPayable, address); local AbstractPausableReactive port at src/base/
+  (the lib REMOVED the upstream one), restoring vm / vmOnly / rnOnly / Subscription.
+- solc stays 0.8.26 (NOT bumped): v4-core PoolManager pins exact 0.8.26, so reactive-lib-omni's 8
+  files were relaxed ^0.8.29→^0.8.26 (it uses no 0.8.27+ features). reactive-lib-omni is **vendored**
+  (src committed directly into lib/, NOT a git submodule — same as forge-std/v4-hooks-public), so
+  these pragma edits persist on a fresh clone; `forge build`/`test` works with no submodule init.
+  See lib/reactive-lib-omni/VENDORED.md (re-apply sed only matters if re-vendoring from upstream).
+- Tests: 278 passing, 0 failing (harness etches MockSystemContract at 0x8888 AFTER construction +
+  re-emits Callback; 3 hook auth tests now expect the NotAuthorized custom error).
 
-Mid-session deviations (authorized):
+Live deployment (Session 12):
 
-- hookChainId: the reactive constructor is 4-arg (host chain parameterized as the subscription
-  source + callback destination), NOT the originally locked 3-arg. spec.md + reactiveSpec.md
-  reconciled.
-- Testability: \_lastRangeEventInRange and the three topic0 constants are internal (spec said
-  private) so the harness can assert them; RangeGuardReactive uses MIT / pragma 0.8.26.
+- HOOK REDEPLOYED for Lasna. The Omni fork changed the Sepolia callback proxy to
+  0xc9f36411C9897e7F959D99ffca2a0Ba7ee0D7bDA; the live 0x50cd… hook authorizes the legacy 0x…fffFfF
+  and its auth is IMMUTABLE, so it could not accept Lasna callbacks. New hook
+  0xFead6CeaD66f86101f0D0fc5A9B97888FA54a7C0 (CALLBACK_SENDER updated in DeployRangeGuardHook.s.sol);
+  new PoolId 0x3e2f931d495879c5ff87e338192def0f0b824bdf07e9f9c16b02cdba34aaa61a; MockUSDC reused
+  0x04feCef5110c5e52794fdA3D935BC2Cc0ee428CA; buffer re-seeded 10,000 USDC. Old 0x50cd… SUPERSEDED.
+- REACTIVE CONTRACT LIVE on Reactive Lasna (chainId 5318007; RPC https://lasna-omni-rpc.rnk.dev/;
+  explorer https://lasna-omni.reactscan.net/): 0xC0e6b70c8FF75962541183fdc247E7B07AD6B70b (tx
+  0xed865d580eef19d972436d4e9c9cce40b7359ef393dd3967c9a280e8a22f5329), funded 0.05 lREACT, wired to
+  the new hook (hookChainId 11155111, Cron10, minCheckpointInterval 120). Verified by RPC reads.
+  owner/admin 0x193D1F3E085efc80e1027891FaA770E81ECC4A1d.
+- rGas is per-CALLBACK (300k gas); a no-op heartbeat with 0 positions spends nothing (verified on
+  chain). pause()/resume() are owner-only on the Lasna RPC; read pause state from storage slot 0
+  byte 21. Lasna ≠ pre-Omni Lasna: both report chainId 5318007 but are separate ledgers — use the
+  -omni RPC/explorer.
 
-Next up: Sepolia deployment (hook → Sepolia, Reactive → ReactVM; deploy scripts ready) → demo
-script → frontend dashboard.
-Carry-ins: payout recipient = v4 sender (owner=sender MVP). Before deploying, confirm the Cron
-topic value, rGas funding amount, and the Callback Proxy address on the target network
-(reactiveSpec §18.3 / §18.7 / §18.9).
+Docs reconciled this session: spec.md, reactiveSpec.md, project-status.md, context.md, CLAUDE.md,
+testing-strategy.md, invariant-mapping.md (state-machine.md reviewed — no change needed). Audit:
+docs/reactive-lib-omni-audit.md. Session record: docs/session-12-reactive-deployment.md.
+
+NOT done: Phase-7 end-to-end (LP deposit → swap → PositionTracked → Checkpointed) — needs the demo
+script (RangeGuardDemo.s.sol). No live LP-deposit/swap tooling exists yet for the Sepolia pool.
+
+Current target: Demo script (RangeGuardDemo.s.sol), then frontend dashboard.
+Carry-ins: payout recipient = v4 sender (owner=sender MVP). The Callback Proxy is PER NETWORK under
+Omni — for any future host chain confirm it at dev.reactive.network/origins-and-destinations before
+deploying the hook (it is NOT the legacy 0x…fffFfF).

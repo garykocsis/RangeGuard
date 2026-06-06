@@ -122,7 +122,8 @@ contract CheckpointCallbackTest is BaseRangeGuardTest {
         vm.warp(BASE_TS + INTERVAL);
 
         vm.prank(NOT_PROXY);
-        vm.expectRevert(bytes("Authorized sender only"));
+        // reactive-lib-omni: onlyServiceProvider reverts with NotAuthorized(caller, _SERVICE_PROVIDER).
+        vm.expectRevert(abi.encodeWithSignature("NotAuthorized(address,address)", NOT_PROXY, CALLBACK_PROXY));
         harness.checkpointCallback(address(0), poolId, positionKey);
     }
 

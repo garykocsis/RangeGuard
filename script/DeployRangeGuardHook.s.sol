@@ -21,10 +21,14 @@ contract DeployRangeGuardHook is Script {
     // local runs work with zero setup; real deployments override via PRIVATE_KEY env.
     uint256 internal constant DEFAULT_ANVIL_PK = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
 
-    // Reactive Network Callback Proxy — consistent across all Reactive Network testnets.
-    // Passed to the hook constructor and registered by AbstractCallback as the sole
-    // `authorizedSenderOnly` caller for the Reactive-callable checkpoint functions.
-    address internal constant CALLBACK_SENDER = 0x0000000000000000000000000000000000fffFfF;
+    // Callback Proxy on the HOST chain (Ethereum Sepolia) for the Reactive LASNA network — the address
+    // that posts Lasna→Sepolia callbacks. Under reactive-lib-omni this becomes the hook's
+    // `_SERVICE_PROVIDER`, i.e. the sole `onlyServiceProvider` (msg.sender) caller authorized to drive
+    // the Reactive-callable checkpoint functions. NOTE: the Omni fork CHANGED this from the legacy
+    // 0x…fffFfF (Kopli) — it is now per-network. Source: dev.reactive.network/origins-and-destinations
+    // (Ethereum Sepolia row, Lasna). If you target a different host chain, update this to that chain's
+    // Lasna callback-proxy address.
+    address internal constant CALLBACK_SENDER = 0xc9f36411C9897e7F959D99ffca2a0Ba7ee0D7bDA;
 
     function run() external returns (RangeGuardHook) {
         // envOr keeps the canonical deploy flow usable in CI / fresh clones (no secret
