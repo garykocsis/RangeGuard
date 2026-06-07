@@ -19,8 +19,8 @@ import {RangeGuardReactive} from "../src/RangeGuardReactive.sol";
 //                     "request(address)" $DEPLOYER --value 0.1ether
 //
 // HOST CHAIN — Ethereum Sepolia (where the live hook is deployed):
-//   Hook:     0x50cd0E7e046022a9B359ca8725aCb75748FB67C0
-//   PoolId:   0xe531d42027094e6563d0838d0fe1c8705172d4feed0e6a5f48a08ca97f2b81cb
+//   Hook:     0xFead6CeaD66f86101f0D0fc5A9B97888FA54a7C0  (Session 12 redeploy)
+//   PoolId:   0x3e2f931d495879c5ff87e338192def0f0b824bdf07e9f9c16b02cdba34aaa61a
 //   Chain ID: 11155111
 //   Cron10:   0x04463f7c1651e6b9774d7f85c85bb94654e3c46ca79b0c16fb16d4183307b687
 //
@@ -51,8 +51,8 @@ contract DeployRangeGuardReactive is Script {
     // setup; real deployments override via PRIVATE_KEY env. Same pattern as DeployRangeGuardHook.
     uint256 internal constant DEFAULT_ANVIL_PK = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
 
-    // Live Sepolia hook to observe (Session 11 deployment).
-    address internal constant DEFAULT_HOOK_ADDRESS = 0x50cd0E7e046022a9B359ca8725aCb75748FB67C0;
+    // Live Sepolia hook to observe (Session 12 redeploy; the Session-11 0x50cd… is superseded).
+    address internal constant DEFAULT_HOOK_ADDRESS = 0xFead6CeaD66f86101f0D0fc5A9B97888FA54a7C0;
 
     // Cron10 system-event topic0 on Lasna (2-min demo heartbeat cadence).
     uint256 internal constant DEFAULT_CRON_TOPIC = 0x04463f7c1651e6b9774d7f85c85bb94654e3c46ca79b0c16fb16d4183307b687;

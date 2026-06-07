@@ -14,11 +14,29 @@ invariant; correctness before gas.
 
 Now
 
-Active target: Demo script (RangeGuardDemo.s.sol) — add liquidity → register a position →
-swap/heartbeat → observe the callback round-trip (PositionTracked on ReactVM → Checkpointed on
-Sepolia) end-to-end — then frontend dashboard. Both the hook (redeployed for Lasna) AND the
-Reactive contract (ReactVM, Lasna) are now LIVE. The end-to-end demo hasn't been exercised only
-because no LP-deposit/swap tooling exists yet for the live Sepolia pool — that IS the demo script.
+Active target: Frontend dashboard (coverage report rendered from Sepolia events). The demo tooling is
+complete (Session 13): 14 Sepolia fork tests + RangeGuardDemo.s.sol (Option A) + LiveEndToEnd/
+LiveWithdraw (Option B) + DemoLPRouter. The frontend should query the live demo positionKey
+0x62e2311b3a51692f0f8ce68f4cd03882e163b37aa357431ad14a4f5b41462d88 (hook 0xFead…a7C0) and render
+PositionRegistered → AccrualUpdated → settlement from on-chain events.
+
+Just completed (Session 13): demo scripts + live end-to-end, and TWO Reactive Omni-fork blockers found
++ fixed:
+- REACTIVE redeploy: the Session-12 reactive 0xC0e6…B70b used the pre-Omni vmOnly ReactVM detection
+  (vm = extcodesize(0x8888)==0), which is permanently false on Lasna Omni → react() reverted "VM only"
+  on every event. Fixed react() → onlySystem (caller==SYSTEM); redeployed reactive
+  0x5eb9c8C021fB3474aA1f2d9EE5f53f6DbA5fFee1 (0.1 lREACT); old 0xC0e6… paused/superseded. 278 tests pass.
+- CALLBACK DELIVERY needs a PROXY RESERVE: callbacks dispatch on Lasna (lREACT spent) but only land on
+  Sepolia if the hook holds a reserve on the Callback Proxy (proxy.depositTo, NOT the hook's raw
+  balance). Added make fund-hook-proxy. Live reserve funded (reserves(hook)=0.05).
+- LIVE round-trip: hook lifecycle broadcast on Sepolia; reactive react() proven (tracked the position,
+  flipped lastKnownInRange in BOTH directions, dispatched callbacks). The callback LANDING on Sepolia
+  was blocked by a transient Lasna→Sepolia observation stall (after block ~11005952) — a testnet infra
+  issue, not the contracts. Live withdrawal settled: PartialPayout/COVERAGE_CAP (tx 0x3dbc8b66…).
+- New artifacts: src/demo/DemoLPRouter.sol (0xEA30…1FEa on Sepolia), script/RangeGuardDemo.s.sol,
+  script/LiveEndToEnd.s.sol, script/LiveWithdraw.s.sol, test/integration/sepolia/* (14 tests),
+  Makefile fund-hook-proxy/reserves-hook.
+-> docs/session-13-demo-script.md, docs/reactive-evidence.md, docs/demo-run-output.md, docs/demo-narrative.md
 
 Just completed (Session 12): reactive-lib → reactive-lib-omni (Omni fork) migration + first live
 ReactVM deployment on Reactive Lasna.
@@ -69,6 +87,16 @@ Position owner attribution: payout recipient is the v4 sender (owner=sender MVP)
 hookChainId 4-arg constructor — authorized mid-session deviation from the locked 3-arg form;
 spec.md + reactiveSpec.md reconciled. Testability: \_lastRangeEventInRange + the three topic0
 constants are internal (spec said private).
+
+Spec §11 view functions NOT implemented (future mainnet-hardening item): getCurrentFee,
+getBufferHealth, getDayCountBasis, getCoverageAPR, getPositionSnapshot, getAccrualState,
+getEarnedCoverage, getEligibility, getEstimatedPayout, getCoverageProgress, getPoolConfig.
+The hook exposes only the auto-generated getters for the public mappings (poolConfig / poolState /
+positions). All Session-13 tests, scripts, and the demo therefore READ those mappings directly
+(derive fee = baseLpFeeBps + bufferBps; buffer health = bufferBalanceStable * 100 / targetBufferSize)
+and parse limitingFactor from the ClaimSettled / PartialPayout event logs. The deployed live hook is
+NOT being redeployed to add these; implement them in a future hardening pass (they also back the
+frontend coverage report — getEarnedCoverage simulating accrual to block.timestamp is the key one).
 
 Tests: 278 passing, 0 failing.
 
@@ -195,9 +223,11 @@ Reactive contract ✅ (complete — see Completed section / session-10 doc)
       Session 12 for Lasna as 0xFead…a7C0; old 0x50cd… superseded — see session-11/12 docs)
 - [x] ReactVM deployment (Session 12: Reactive → Reactive Lasna 0xC0e6…B70b, funded + wired to the
       new hook, verified by RPC — see session-12 doc)
-- [ ] Demo script (RangeGuardDemo.s.sol — add liquidity + swap on the live Sepolia pool to drive
-      PositionTracked → Checkpointed end-to-end; full lifecycle event history) ← NOW
-- [ ] Frontend dashboard (coverage report rendered from Sepolia events)
+- [x] Demo script (Session 13): RangeGuardDemo.s.sol (Option A, fork+vm.warp, spec §14) + LiveEndToEnd.s.sol
+      / LiveWithdraw.s.sol (Option B live broadcast) + DemoLPRouter.sol + 14 Sepolia fork tests. Live
+      lifecycle broadcast on Sepolia; reactive react() proven (after the vmOnly→onlySystem fix +
+      redeploy). See docs/session-13-demo-script.md, docs/reactive-evidence.md.
+- [ ] Frontend dashboard (coverage report rendered from Sepolia events) ← NOW
 
 Phase 4: Protocol Invariants (cross-cutting)
 

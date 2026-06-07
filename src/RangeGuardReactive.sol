@@ -157,10 +157,15 @@ contract RangeGuardReactive is AbstractPausableReactive {
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Single entry point for all subscribed event notifications; routes to the right handler.
-    /// @dev    `vmOnly` — only the ReactVM runtime may call. Routing: a log from the system contract
-    ///         is the Cron heartbeat; otherwise dispatch on topic0. Unrecognized logs are ignored.
+    /// @dev    `onlySystem` — only the Reactive system contract (`SYSTEM`, 0x8888…8888) may deliver
+    ///         events. Under the Lasna **Omni** fork the network runs a single unified CometBFT EVM,
+    ///         so the legacy `vmOnly` ReactVM-detection (probing for an ABSENT system contract) returns
+    ///         a false negative — `SYSTEM` is present in every context, making `vm` always false and
+    ///         `vmOnly` revert on every legitimate delivery. The correct Omni guard is caller-based:
+    ///         the trusted dispatcher `SYSTEM` is `msg.sender` when it invokes `react()`. Routing: a log
+    ///         from the system contract is the Cron heartbeat; otherwise dispatch on topic0.
     /// @param  log  The intercepted log record delivered by the Reactive Network.
-    function react(LogRecord calldata log) external override vmOnly {
+    function react(LogRecord calldata log) external override onlySystem {
         if (log.contractAddress == address(SYSTEM)) {
             _handleHeartbeat();
         } else if (log.topic0 == POSITION_REGISTERED_TOPIC_0) {

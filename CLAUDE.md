@@ -407,3 +407,19 @@ Current target: Demo script (RangeGuardDemo.s.sol), then frontend dashboard.
 Carry-ins: payout recipient = v4 sender (owner=sender MVP). The Callback Proxy is PER NETWORK under
 Omni — for any future host chain confirm it at dev.reactive.network/origins-and-destinations before
 deploying the hook (it is NOT the legacy 0x…fffFfF).
+
+Session 13 carry-ins (live-demo blockers found + fixed):
+1. REACTIVE react() vmOnly BUG: the local AbstractPausableReactive port detected the ReactVM via
+   `vm = extcodesize(0x8888)==0`. On Lasna Omni's unified CometBFT EVM the system contract 0x8888
+   exists in EVERY context, so vm is ALWAYS false and react()'s `vmOnly` reverted "VM only" on every
+   delivered event — the reactive could process nothing. FIX: react() now uses `onlySystem`
+   (msg.sender == SYSTEM 0x8888), the upstream Omni guard. Redeployed reactive
+   0x5eb9c8C021fB3474aA1f2d9EE5f53f6DbA5fFee1 on Lasna; OLD 0xC0e6… is SUPERSEDED + paused.
+2. CALLBACK DELIVERY needs a PROXY RESERVE (the big gotcha): reactive callbacks dispatch on Lasna
+   (lREACT spent) but only LAND on the Sepolia hook if the hook holds a reserve on the host-chain
+   Callback Proxy (0xc9f3…7bDA). The proxy uses a reserve/depositTo model — funding the hook's raw
+   balance does NOTHING. Symptom of the gap: reserves(hook)=0, debt=0, no Sepolia tx, no revert
+   trace. FIX/STEP (MANDATORY after any hook redeploy): `make fund-hook-proxy`
+   (proxy.depositTo{0.05 ETH}(hook)); verify `make reserves-hook`. The hook already inherits
+   AbstractPayer (pay()) and all reactive-callable fns take the leading RVM-id address placeholder,
+   so neither of those was the issue — only the reserve.

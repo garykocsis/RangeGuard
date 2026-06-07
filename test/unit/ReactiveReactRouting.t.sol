@@ -2,8 +2,8 @@
 pragma solidity ^0.8.26;
 
 // Unit tests for RangeGuardReactive.react() routing — each subscribed source dispatches to the right
-// handler. react() is vmOnly; in plain Foundry vm == true (no system contract), so it is callable.
-// Naming per testing-strategy.md.
+// handler. react() is onlySystem (Omni guard), so calls are pranked as SYSTEM_ADDR (the trusted
+// dispatcher). Naming per testing-strategy.md.
 
 import {Vm} from "forge-std/Vm.sol";
 import {IReactive} from "reactive-lib/src/interfaces/IReactive.sol";
@@ -27,6 +27,7 @@ contract ReactiveReactRoutingTest is ReactiveTestBase {
 
     /// PositionRegistered topic -> _handlePositionRegistered.
     function test_React_WhenPositionRegisteredTopic_RoutesToRegister() public {
+        vm.prank(SYSTEM_ADDR);
         reactive.react(_registeredLog(POOL, KEY, -100, 100, 0));
         assertTrue(_active(KEY), "registered via react routing");
     }
@@ -34,6 +35,7 @@ contract ReactiveReactRoutingTest is ReactiveTestBase {
     /// TickUpdated topic -> _handleTickUpdated (transition detected).
     function test_React_WhenTickUpdatedTopic_RoutesToTick() public {
         reactive.exposed_handlePositionRegistered(_registeredLog(POOL, KEY, -100, 100, 0)); // in range
+        vm.prank(SYSTEM_ADDR);
         reactive.react(_tickLog(POOL, 500)); // out
         assertFalse(_inRange(KEY), "tick routing flipped range status");
     }
@@ -41,6 +43,7 @@ contract ReactiveReactRoutingTest is ReactiveTestBase {
     /// PositionClosed topic -> _handlePositionClosed.
     function test_React_WhenPositionClosedTopic_RoutesToClose() public {
         reactive.exposed_handlePositionRegistered(_registeredLog(POOL, KEY, -100, 100, 0));
+        vm.prank(SYSTEM_ADDR);
         reactive.react(_closedLog(POOL, KEY));
         assertFalse(_active(KEY), "closed via react routing");
         assertEq(reactive.activeKeysLength(), 0, "untracked via react routing");
@@ -50,7 +53,10 @@ contract ReactiveReactRoutingTest is ReactiveTestBase {
     function test_React_WhenFromSystemContract_RoutesToHeartbeat() public {
         reactive.exposed_handlePositionRegistered(_registeredLog(POOL, KEY, -100, 100, 0));
         vm.warp(REACT_TS + MIN_INTERVAL); // due
-        reactive.react(_cronLog());
+        // Build the log first (it makes an external call that would otherwise consume the prank).
+        IReactive.LogRecord memory cron = _cronLog();
+        vm.prank(SYSTEM_ADDR);
+        reactive.react(cron);
         assertEq(_lastCheckpoint(KEY), REACT_TS + MIN_INTERVAL, "heartbeat ran via react routing");
     }
 
@@ -62,6 +68,7 @@ contract ReactiveReactRoutingTest is ReactiveTestBase {
             _log(SEPOLIA_CHAIN_ID, hookAddr, uint256(keccak256("Nonsense(uint256)")), uint256(POOL), 0, "");
 
         vm.recordLogs();
+        vm.prank(SYSTEM_ADDR);
         reactive.react(log);
         Vm.Log[] memory logs = vm.getRecordedLogs();
 

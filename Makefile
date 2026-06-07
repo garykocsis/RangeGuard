@@ -3,7 +3,7 @@
         deploy-hook deploy-hook-dry stage-init-seed mint-usdc \
         faucet deploy-reactive deploy-reactive-dry \
         reactive-balance reactive-paused reactive-topup reactive-pause reactive-resume \
-        deps
+        fund-hook-proxy reserves-hook reset-pool-tick deps
 
 # Load local env vars when present (PRIVATE_KEY, SEPOLIA_RPC_URL, etc.)
 -include .env
@@ -15,6 +15,7 @@ export
 HOOK_SCRIPT     := script/DeployRangeGuardHook.s.sol:DeployRangeGuardHook
 STAGE_SCRIPT    := script/StageInitSeedPool.s.sol:StageInitSeedPool
 REACTIVE_SCRIPT := script/DeployRangeGuardReactive.s.sol:DeployRangeGuardReactive
+RESET_SCRIPT    := script/ResetPoolTick.s.sol:ResetPoolTick
 
 ANVIL_RPC_URL    ?= http://127.0.0.1:8545
 SEPOLIA_CHAIN_ID := 11155111
@@ -26,12 +27,20 @@ LASNA_RPC_URL    ?= https://lasna-omni-rpc.rnk.dev/
 # e.g. `make deploy-reactive HOOK_ADDRESS=0x...`.
 DEPLOYER          ?= 0x193D1F3E085efc80e1027891FaA770E81ECC4A1d
 HOOK_ADDRESS      ?= 0xFead6CeaD66f86101f0D0fc5A9B97888FA54a7C0
-REACTIVE_ADDRESS  ?= 0xC0e6b70c8FF75962541183fdc247E7B07AD6B70b
+# Session 13 redeploy (vmOnly->onlySystem Omni fix). The Session-12 0xC0e6… is SUPERSEDED/paused.
+REACTIVE_ADDRESS  ?= 0x5eb9c8C021fB3474aA1f2d9EE5f53f6DbA5fFee1
 MOCK_USDC_ADDRESS ?= 0x04feCef5110c5e52794fdA3D935BC2Cc0ee428CA
 FAUCET            ?= 0x9b9BB25f1A81078C544C829c5EB7822d747Cf434
 FAUCET_VALUE      ?= 0.1ether
 RGAS_FUND_AMOUNT  ?= 0.05ether
 SEED_USDC_AMOUNT  ?= 10000000000   # 10,000 USDC (6 decimals)
+
+# Host-chain (Sepolia) Callback Proxy for Lasna->Sepolia callbacks. CRITICAL: reactive callbacks
+# only LAND if the hook has a RESERVE on this proxy (proxy uses a reserve/depositTo model, NOT the
+# hook's raw balance). Without `make fund-hook-proxy`, callbacks dispatch on Lasna (lREACT spent)
+# but silently never execute on Sepolia (reserves(hook)=0, debt=0, no revert trace).
+CALLBACK_PROXY      ?= 0xc9f36411C9897e7F959D99ffca2a0Ba7ee0D7bDA
+PROXY_DEPOSIT_AMOUNT ?= 0.05ether
 
 # ----------------------------------------------------------------------------
 # Help
@@ -64,6 +73,13 @@ help:
 	@echo "  make reactive-topup      - Send $(RGAS_FUND_AMOUNT) lREACT to the reactive contract"
 	@echo "  make reactive-pause      - Pause the Cron heartbeat (owner only)"
 	@echo "  make reactive-resume     - Resume the Cron heartbeat (owner only)"
+	@echo ""
+	@echo "Callback delivery funding (Sepolia) — REQUIRED after any hook (re)deploy:"
+	@echo "  make fund-hook-proxy     - Deposit $(PROXY_DEPOSIT_AMOUNT) into the Callback Proxy reserve for the hook"
+	@echo "  make reserves-hook       - Show the hook's reserve on the Callback Proxy"
+	@echo ""
+	@echo "Demo recording prep (Sepolia):"
+	@echo "  make reset-pool-tick     - Nudge the live pool tick back to ~\$$2,000 (centre of the demo range)"
 	@echo ""
 	@echo "Local:"
 	@echo "  make deploy-anvil-dry / deploy-anvil - Simulate / broadcast the hook deploy on anvil"
@@ -157,3 +173,23 @@ reactive-pause:
 
 reactive-resume:
 	@cast send $(REACTIVE_ADDRESS) "resume()" --rpc-url $(LASNA_RPC_URL) --private-key $(PRIVATE_KEY)
+
+# ----------------------------------------------------------------------------
+# Callback delivery funding (Sepolia) — MANDATORY after any hook (re)deploy.
+# Reactive callbacks dispatch on Lasna (lREACT) but only LAND on Sepolia if the hook holds a
+# RESERVE on the Callback Proxy. depositTo(hook) credits that reserve; the proxy draws destination
+# gas from it. Direct ETH to the hook does NOT work (proxy uses reserves, not the hook balance).
+fund-hook-proxy:
+	@cast send $(CALLBACK_PROXY) "depositTo(address)" $(HOOK_ADDRESS) --value $(PROXY_DEPOSIT_AMOUNT) \
+		--rpc-url $(SEPOLIA_RPC_URL) --private-key $(PRIVATE_KEY)
+
+reserves-hook:
+	@cast call $(CALLBACK_PROXY) "reserves(address)(uint256)" $(HOOK_ADDRESS) --rpc-url $(SEPOLIA_RPC_URL)
+
+# ----------------------------------------------------------------------------
+# Demo recording prep
+# ----------------------------------------------------------------------------
+# Re-centre the live pool tick to ~$2,000 before recording the demo (a single bounded swap; unused
+# input is refunded). Run, confirm the tick is in range, then run RangeGuardDemo.s.sol.
+reset-pool-tick:
+	@forge script $(RESET_SCRIPT) --rpc-url $(SEPOLIA_RPC_URL) --broadcast --private-key $(PRIVATE_KEY) -vv
