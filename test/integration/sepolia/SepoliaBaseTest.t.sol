@@ -117,7 +117,15 @@ abstract contract SepoliaBaseTest is Test {
     receive() external payable {}
 
     function setUp() public virtual {
-        vm.createSelectFork(vm.envString("SEPOLIA_RPC_URL"));
+        // These tests bind to the LIVE Sepolia deployment, so they need a real RPC. CI has no
+        // SEPOLIA_RPC_URL (no .env), so skip cleanly there instead of reverting in setUp — they run
+        // locally / wherever the RPC is configured. (Foundry auto-loads .env from the project root.)
+        string memory rpc = vm.envOr("SEPOLIA_RPC_URL", string(""));
+        if (bytes(rpc).length == 0) {
+            vm.skip(true, "SEPOLIA_RPC_URL not set - fork tests require a live Sepolia RPC");
+            return;
+        }
+        vm.createSelectFork(rpc);
 
         hook = RangeGuardHook(payable(HOOK));
         manager = IPoolManager(POOL_MANAGER);
