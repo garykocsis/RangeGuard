@@ -50,9 +50,17 @@ Reactive contract LIVE on Reactive Lasna (chainId 5318007): 0xC0e6b70c8FF7596254
 (tx 0xed865d…5329), funded 0.05 lREACT, wired to the new hook. See
 docs/session-12-reactive-deployment.md.
 
+Frontend dashboard (Session 14): COMPLETE. React 18 + Vite + Tailwind + viem SPA in frontend/,
+no backend — renders the LP coverage report from LIVE Sepolia on-chain events for hook 0xFead…a7C0.
+Two modes (Option C): live (default / ?positionKey=0x…, honest + verifiable; reconstructs closed
+positions from event history since settlement clears positions[…]) and ?demo=true (hardcoded fork
+narrative, banner-labeled "Simulated 45-day lifecycle"). Buffer health from poolState; current tick
+via PoolManager extsload. Deployed on Vercel (auto from main): https://range-guard.vercel.app.
+-> docs/session-14-frontend.md
+
 Next implementation target:
 
-- Frontend dashboard (coverage report rendered from Sepolia events)
+- Recorded 5-minute demo (spec §15), then the full README + demo video write-up
 
 Completed (Session 13): demo tooling — RangeGuardDemo.s.sol (Option A, fork+vm.warp, spec §14),
 LiveEndToEnd.s.sol / LiveWithdraw.s.sol (Option B live broadcast), DemoLPRouter.sol (live LP whose
@@ -66,8 +74,9 @@ not contracts). -> docs/session-13-demo-script.md, docs/reactive-evidence.md
 
 Planned next steps:
 
-- Frontend dashboard (coverage report rendered from Sepolia events): query the live demo positionKey
-  0x62e2311b…462d88 on hook 0xFead…a7C0 and render PositionRegistered → AccrualUpdated → settlement.
+- Record the 5-minute demo (spec §15): terminal segment (RangeGuardDemo.s.sol) + coverage-report
+  segment (the ?demo=true dashboard view) + reactive evidence. Then write the full README and link
+  the demo video.
 
 Recent architecture update:
 
