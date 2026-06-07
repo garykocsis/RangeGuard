@@ -4,6 +4,9 @@ node_modules/
 # build output
 dist/
 
+# vite cache
+.vite/
+
 # local env / editor
 .env
 .env.local
