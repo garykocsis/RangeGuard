@@ -3,7 +3,7 @@
         deploy-hook deploy-hook-dry stage-init-seed mint-usdc \
         faucet deploy-reactive deploy-reactive-dry \
         reactive-balance reactive-paused reactive-topup reactive-pause reactive-resume \
-        fund-hook-proxy reserves-hook reset-pool-tick deps
+        fund-hook-proxy reserves-hook reset-pool-tick hooks deps
 
 # Load local env vars when present (PRIVATE_KEY, SEPOLIA_RPC_URL, etc.)
 -include .env
@@ -55,6 +55,7 @@ help:
 	@echo "  make coverage            - Coverage report"
 	@echo "  make clean               - Remove build artifacts"
 	@echo "  make deps                - (info) dependencies are VENDORED; no install needed"
+	@echo "  make hooks               - Enable the version-controlled git pre-push hook (mirrors CI)"
 	@echo ""
 	@echo "Sepolia host-chain deploy (needs PRIVATE_KEY + SEPOLIA_RPC_URL in .env):"
 	@echo "  make deploy-hook-dry     - Simulate the hook deploy (prints mined address)"
@@ -118,6 +119,12 @@ deps:
 	@echo "All dependencies are VENDORED (committed under lib/, not git submodules):"
 	@echo "  forge-std, v4-hooks-public, reactive-lib-omni (see lib/reactive-lib-omni/VENDORED.md)."
 	@echo "A fresh 'git clone' + 'forge build' works with no submodule init."
+
+# Point git at the version-controlled hooks dir so the pre-push hook (fmt --check + build + test,
+# mirroring CI) runs for everyone who opts in. One-time per clone. Bypass a push with --no-verify.
+hooks:
+	@git config core.hooksPath .githooks
+	@echo "Enabled .githooks (pre-push runs forge fmt --check + build + test). Bypass: git push --no-verify"
 
 # ----------------------------------------------------------------------------
 # Local (anvil)

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# RangeGuard pre-push hook — mirrors CI (.github/workflows/ci.yml) so a push can't fail the same
+# checks CI runs: forge fmt --check, forge build, forge test. Enable once with `make hooks`
+# (sets core.hooksPath=.githooks). Bypass a single push with `git push --no-verify`.
+set -euo pipefail
+
+# Run from the repo root regardless of where git invokes the hook.
+cd "$(git rev-parse --show-toplevel)"
+
+if ! command -v forge >/dev/null 2>&1; then
+  echo "[pre-push] forge not found on PATH — skipping local checks (CI will still run them)."
+  exit 0
+fi
+
+echo "[pre-push] 1/3 forge fmt --check"
+forge fmt --check
+
+echo "[pre-push] 2/3 forge build"
+forge build >/dev/null
+
+echo "[pre-push] 3/3 forge test"
+forge test >/dev/null
+
+echo "[pre-push] OK — fmt clean, build OK, tests pass. Pushing."
