@@ -12,8 +12,9 @@ import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 contract HelperConfig is Script {
     // Canonical deployment addresses on Sepolia
     address internal constant POOL_MANAGER_SEPOLIA = 0xE03A1074c86CFeDd5C142C4F04F1a1536e203543;
-    address internal constant LP_ROUTER_SEPOLIA = 0xB66e5338d66336Ec1fBfe60C282dF5846B6bCee2; // Example public periphery address
-    address internal constant SWAP_ROUTER_SEPOLIA = 0xc7b0E7da93e076c32a2656D787FFB0E055B8E9cc;
+    // Canonical Uniswap v4 test routers on Sepolia, used to drive the live demo pool.
+    address internal constant LP_ROUTER_SEPOLIA = 0x0C478023803a644c94c4CE1C1e7b9A087e411B0A; // PoolModifyLiquidityTest
+    address internal constant SWAP_ROUTER_SEPOLIA = 0x9B6b46e2c869aa39918Db7f52f5557FE577B6eEe; // PoolSwapTest
 
     // token1 (stable numeraire) for the Sepolia demo pool — the deployed MockUSDC (6 decimals).
     // Persisted here right after DeployMockUSDC.s.sol broadcasts so getStableToken() never

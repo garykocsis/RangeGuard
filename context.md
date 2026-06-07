@@ -52,14 +52,22 @@ docs/session-12-reactive-deployment.md.
 
 Next implementation target:
 
-- Demo script (RangeGuardDemo.s.sol), then frontend dashboard
+- Frontend dashboard (coverage report rendered from Sepolia events)
+
+Completed (Session 13): demo tooling — RangeGuardDemo.s.sol (Option A, fork+vm.warp, spec §14),
+LiveEndToEnd.s.sol / LiveWithdraw.s.sol (Option B live broadcast), DemoLPRouter.sol (live LP whose
+IL payout routes to the deployer), and 14 Sepolia fork integration tests. Two Reactive Omni-fork
+blockers found + fixed: (1) react() vmOnly → onlySystem (the pre-Omni extcodesize(0x8888)==0 ReactVM
+detection is always false on Omni's unified EVM) — reactive redeployed 0x5eb9c8C0…Fee1, old 0xC0e6…
+paused; (2) callbacks need a Callback-Proxy RESERVE (proxy.depositTo, not the hook's raw balance) —
+make fund-hook-proxy. Live lifecycle broadcast on Sepolia; reactive react()/detection/dispatch proven
+on Lasna; the callback LANDING on Sepolia was blocked by a transient testnet observation stall (infra,
+not contracts). -> docs/session-13-demo-script.md, docs/reactive-evidence.md
 
 Planned next steps:
 
-- Demo script (RangeGuardDemo.s.sol): add liquidity + swap on the live Sepolia pool to drive
-  PositionTracked (ReactVM) → Checkpointed (Sepolia) end-to-end; full lifecycle event history.
-  (This is the only remaining piece for Phase-7 end-to-end verification.)
-- Frontend dashboard (coverage report rendered from Sepolia events)
+- Frontend dashboard (coverage report rendered from Sepolia events): query the live demo positionKey
+  0x62e2311b…462d88 on hook 0xFead…a7C0 and render PositionRegistered → AccrualUpdated → settlement.
 
 Recent architecture update:
 

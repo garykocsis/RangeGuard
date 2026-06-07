@@ -106,10 +106,12 @@ contract ReactivePauseResumeTest is BaseRangeGuardTest {
         reactive.resume();
     }
 
-    /// Why: in the Reactive Network environment (vm == false), react() is not callable (vmOnly).
-    function test_React_WhenVmFalse_Reverts() public {
+    /// Why: under the Omni guard react() is `onlySystem` — a caller that is not the trusted system
+    /// dispatcher (SYSTEM) is rejected with NotAuthorized. (Replaces the obsolete vmOnly "VM only"
+    /// check, which gave a false negative on Lasna Omni where SYSTEM is present in every context.)
+    function test_React_WhenNotSystem_Reverts() public {
         IReactive.LogRecord memory log;
-        vm.expectRevert(bytes("VM only"));
+        vm.expectRevert(); // AbstractPayer.NotAuthorized(caller, SYSTEM) — msg.sender is this test, not SYSTEM
         reactive.react(log);
     }
 }
