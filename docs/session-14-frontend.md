@@ -411,9 +411,10 @@ The Vercel project is connected to the GitHub repo's **`main`** branch (auto-dep
 
 ### Live URL confirmation
 
-- [ ] _To confirm after merge to `main`:_ https://range-guard.vercel.app loads and shows the live
-      coverage report (and `?demo=true` shows the simulated narrative). Update this checkbox once the
-      Vercel deploy is green.
+- [x] **Confirmed 2026-06-07 22:01 UTC** (after merge to `main`): https://range-guard.vercel.app
+      loads (HTTP 200, title "RangeGuard — Coverage Report", JS bundle served) and renders the live
+      coverage report; `?demo=true` resolves through the SPA rewrite (HTTP 200) and shows the
+      simulated narrative.
 
 ---
 
