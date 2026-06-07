@@ -79,14 +79,15 @@ Completed (Phase 3B — continued, Session 11; HOOK SUPERSEDED by the Session-12
 
 Current implementation target:
 
-- Demo script (RangeGuardDemo.s.sol) — drive the live Sepolia pool end-to-end, then frontend dashboard
+- Recorded 5-minute demo (spec §15), then the full README + demo video write-up
 
 Upcoming implementation order:
 
 1. Sepolia hook deployment ✅ (Session 11; REDEPLOYED for Lasna in Session 12 — new hook 0xFead…a7C0)
 2. ReactVM (reactive) deployment ✅ (Session 12 — Reactive Lasna 0xC0e6…B70b, live + wired + verified)
-3. Demo script (RangeGuardDemo.s.sol) ← current
-4. Frontend dashboard
+3. Demo script (RangeGuardDemo.s.sol) ✅ (Session 13)
+4. Frontend dashboard ✅ (Session 14 — frontend/, live coverage report; https://range-guard.vercel.app)
+5. Recorded 5-minute demo + full README ← current
 
 ---
 
@@ -360,7 +361,34 @@ At the start of every session, Claude must:
 
 # Current Session State
 
-Last completed (Session 12): reactive-lib → reactive-lib-omni (Omni fork) migration + first live
+Last completed (Session 14): Frontend dashboard — the LP coverage report (spec §4 Pillar 4).
+React 18 + Vite + Tailwind + viem SPA in `frontend/`, NO backend — reads public Sepolia RPC only.
+- TWO MODES (Option C): LIVE (default, or `?positionKey=0x…`) renders the real on-chain coverage
+  report for any position; `?demo=true` renders a hardcoded fork narrative from
+  docs/demo-run-output.md, banner-labeled "Simulated 45-day lifecycle (Sepolia fork)" — never
+  presented as live. Live mode is for judges/employers; demo mode is for the 4:15–4:45 recording.
+- KEY DESIGN: settlement CLEARS positions[poolId][key] (strict CEI), so a closed position reads
+  ALL ZEROS / active=false. The coverage report is therefore reconstructed from EVENT LOGS, not
+  the live mapping — PositionSummary rebuilds entry/earned/payout/IL/factor from PositionRegistered
+  + the settlement event. This is Pillar 4 made literal: the report lives in events.
+- READS: poolState (buffer health), poolConfig (targetBufferSize/coverageApr/secondsPerYear, fee =
+  base+buffer), positions (live PositionState). Current tick has no getter → read via PoolManager
+  `extsload` at keccak256(abi.encode(poolId, 6)) (v4 StateLibrary POOLS_SLOT=6), unpack Slot0
+  sqrtPriceX96(160)|tick(24). Event log fetch: single eth_getLogs with topics [null,null,key]
+  (positionKey is topic2 on every position-scoped event), decoded by topic0; floored at
+  DEPLOY_BLOCK=11_005_000, chunked 9k blocks; 30s poll.
+- VERIFIED live (hook 0xFead…a7C0): PositionRegistered 228.69 USDC / range $1,790–$2,208 →
+  Checkpoint +0.02 USDC (dt=0 baseline row skipped) → PartialPayout/COVERAGE_CAP 0.02; buffer
+  10,000.81 / health 10.00%. Build + dev server pass.
+- DEPLOY: Vercel auto-deploy from `main` → https://range-guard.vercel.app (Framework Vite, root
+  `frontend`, build `npm run build`, output `dist`, no env vars; frontend/vercel.json SPA rewrites).
+- TWO HONEST NOTES: live range shows $1,790–$2,208 (tick rounding) not $1,800–$2,200; live
+  settlement is PartialPayout/COVERAGE_CAP not ClaimSettled/IL_CAP (IL_CAP is the ?demo=true story).
+-> docs/session-14-frontend.md
+
+---
+
+Previously completed (Session 12): reactive-lib → reactive-lib-omni (Omni fork) migration + first live
 ReactVM deployment on Reactive Lasna. The whole reactive stack is live and verified; the only
 remaining piece is the demo script (LP-deposit + swap tooling) to drive the round-trip end-to-end.
 
@@ -403,7 +431,7 @@ docs/reactive-lib-omni-audit.md. Session record: docs/session-12-reactive-deploy
 NOT done: Phase-7 end-to-end (LP deposit → swap → PositionTracked → Checkpointed) — needs the demo
 script (RangeGuardDemo.s.sol). No live LP-deposit/swap tooling exists yet for the Sepolia pool.
 
-Current target: Demo script (RangeGuardDemo.s.sol), then frontend dashboard.
+Current target: Recorded 5-minute demo (spec §15), then the full README + demo video write-up.
 Carry-ins: payout recipient = v4 sender (owner=sender MVP). The Callback Proxy is PER NETWORK under
 Omni — for any future host chain confirm it at dev.reactive.network/origins-and-destinations before
 deploying the hook (it is NOT the legacy 0x…fffFfF).
@@ -423,3 +451,17 @@ Session 13 carry-ins (live-demo blockers found + fixed):
    (proxy.depositTo{0.05 ETH}(hook)); verify `make reserves-hook`. The hook already inherits
    AbstractPayer (pay()) and all reactive-callable fns take the leading RVM-id address placeholder,
    so neither of those was the issue — only the reserve.
+
+Session 14 carry-ins (frontend):
+1. SPEC §11 VIEW FUNCTIONS NOT IMPLEMENTED on the deployed hook (mainnet-hardening item):
+   getPoolConfig/getBufferHealth/getCurrentFee/getDayCountBasis/getCoverageAPR/getPositionSnapshot/
+   getAccrualState/getEarnedCoverage/getEligibility/getEstimatedPayout/getCoverageProgress. The
+   frontend works around this by reading the public mappings directly + extsload for the live tick.
+   getEarnedCoverage (accrual simulated to block.timestamp) is the one worth adding — it would let an
+   OPEN position render live coverage without the client-side extsload/simulation.
+2. README is a MINIMAL PLACEHOLDER for now (tagline + live dashboard link + "coming soon"). The full
+   write-up lands AFTER the demo recording, together with the demo video link.
+3. Frontend is NOT auto-deployed until merged to `main` (Vercel watches main). Live-URL confirmation
+   in docs/session-14-frontend.md has an unchecked box to tick once the Vercel deploy is green.
+4. Live demo position is CLOSED (settled) on-chain — the live coverage report is honest + sparse;
+   the full IL_CAP narrative is the ?demo=true view (clearly labeled simulated).

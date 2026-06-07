@@ -1,5 +1,5 @@
 RangeGuard Project Status
-Last Updated: 2026-06-05 (Session 12 — reactive-lib-omni migration + ReactVM deployment on Lasna)
+Last Updated: 2026-06-07 (Session 14 — frontend dashboard / coverage report)
 How to use this file
 
 The Roadmap is the single source of truth for progress — one checkbox per item.
@@ -14,11 +14,27 @@ invariant; correctness before gas.
 
 Now
 
-Active target: Frontend dashboard (coverage report rendered from Sepolia events). The demo tooling is
-complete (Session 13): 14 Sepolia fork tests + RangeGuardDemo.s.sol (Option A) + LiveEndToEnd/
-LiveWithdraw (Option B) + DemoLPRouter. The frontend should query the live demo positionKey
-0x62e2311b3a51692f0f8ce68f4cd03882e163b37aa357431ad14a4f5b41462d88 (hook 0xFead…a7C0) and render
-PositionRegistered → AccrualUpdated → settlement from on-chain events.
+Active target: Recorded 5-minute demo (spec §15). All protocol code, deployment, demo tooling, and
+the frontend dashboard are complete. Remaining work is the recording itself + the full README/demo
+video write-up afterward.
+
+Just completed (Session 14): Frontend dashboard — coverage report (frontend/, React 18 + Vite +
+Tailwind + viem, no backend). Renders the LP coverage report from LIVE Sepolia on-chain events;
+verified end-to-end against hook 0xFead…a7C0. Two modes (Option C):
+- LIVE (default, or ?positionKey=0x…): real on-chain events for any position — honest + verifiable.
+  Settlement CLEARS positions[…], so a closed position reads zero from the mapping; the dashboard
+  reconstructs entry/earned/payout from EVENT HISTORY (PositionRegistered + settlement). Buffer
+  health from poolState; current tick via PoolManager extsload (Slot0). Polls every 30s.
+- DEMO (?demo=true): hardcoded fork narrative from docs/demo-run-output.md, banner-labeled
+  "Simulated 45-day lifecycle (Sepolia fork)" — never presented as live. Used for the recording's
+  4:15–4:45 coverage-report segment.
+Live data verified: PositionRegistered (228.69 USDC, range $1,790–$2,208) → Checkpoint +0.02 USDC →
+PartialPayout/COVERAGE_CAP 0.02 USDC; buffer 10,000.81 / health 10.00%. Two honest notes: live range
+reads $1,790–$2,208 (tick rounding, not the nominal $1,800–$2,200); live settlement is
+PartialPayout/COVERAGE_CAP, not ClaimSettled/IL_CAP (the IL_CAP story is the ?demo=true view).
+Deployed via Vercel (auto-deploy from main): https://range-guard.vercel.app — Framework Vite, root
+frontend, build npm run build, output dist, no env vars.
+-> docs/session-14-frontend.md
 
 Just completed (Session 13): demo scripts + live end-to-end, and TWO Reactive Omni-fork blockers found
 + fixed:
@@ -227,7 +243,10 @@ Reactive contract ✅ (complete — see Completed section / session-10 doc)
       / LiveWithdraw.s.sol (Option B live broadcast) + DemoLPRouter.sol + 14 Sepolia fork tests. Live
       lifecycle broadcast on Sepolia; reactive react() proven (after the vmOnly→onlySystem fix +
       redeploy). See docs/session-13-demo-script.md, docs/reactive-evidence.md.
-- [ ] Frontend dashboard (coverage report rendered from Sepolia events) ← NOW
+- [x] Frontend dashboard (Session 14: coverage report from LIVE Sepolia events; React+Vite+viem at
+      frontend/; live mode + ?demo=true simulated mode; Vercel https://range-guard.vercel.app —
+      see docs/session-14-frontend.md)
+- [ ] Recorded 5-minute demo (spec §15) + full README / demo video write-up ← NOW
 
 Phase 4: Protocol Invariants (cross-cutting)
 
