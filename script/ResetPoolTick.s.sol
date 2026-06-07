@@ -73,7 +73,8 @@ contract ResetPoolTick is Script {
         }
 
         uint160 limit = TickMath.getSqrtPriceAtTick(TARGET_TICK);
-        PoolSwapTest.TestSettings memory settings = PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false});
+        PoolSwapTest.TestSettings memory settings =
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false});
 
         vm.startBroadcast(pk);
         if (tickBefore < TARGET_TICK) {
