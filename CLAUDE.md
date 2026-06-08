@@ -80,6 +80,7 @@ Completed (Phase 3B — continued, Session 11; HOOK SUPERSEDED by the Session-12
 Current implementation target:
 
 - Recorded 5-minute demo (spec §15), then the full README + demo video write-up
+  (presentation deck done — docs/RangeGuard-Demo-Deck.pptx, Session 15)
 
 Upcoming implementation order:
 
@@ -87,7 +88,8 @@ Upcoming implementation order:
 2. ReactVM (reactive) deployment ✅ (Session 12 — Reactive Lasna 0xC0e6…B70b, live + wired + verified)
 3. Demo script (RangeGuardDemo.s.sol) ✅ (Session 13)
 4. Frontend dashboard ✅ (Session 14 — frontend/, live coverage report; https://range-guard.vercel.app)
-5. Recorded 5-minute demo + full README ← current
+5. Presentation deck ✅ (Session 15 — docs/RangeGuard-Demo-Deck.pptx, 9-slide Google-Slides .pptx)
+6. Recorded 5-minute demo + full README ← current
 
 ---
 
@@ -361,7 +363,30 @@ At the start of every session, Claude must:
 
 # Current Session State
 
-Last completed (Session 14): Frontend dashboard — the LP coverage report (spec §4 Pillar 4).
+Last completed (Session 15): Google Slides demo deck — `docs/RangeGuard-Demo-Deck.pptx`.
+A 9-slide `.pptx` (python-pptx 1.0.2) that imports directly into Google Slides. 16:9 widescreen
+(13.33"×7.5"), Calibri throughout (best Slides-import fidelity), dark-navy design system
+(bg #0f1117, primary #ffffff, accent #00d395, secondary #94a3b8, amber #f59e0b, danger #ef4444,
+card #1e2433). Slides: 1 Problem/mechanism · 2 Problem/math · 3 Solution intro · 4 Economic flywheel
+(6-box circular flow) · 5 Five pillars · 6 Code walkthrough (6-box lifecycle + 2 amber callouts) ·
+7 Demo (3 cols + Reactive callout) · 8 Coverage report (2 cols + event-mapping table) · 9 Closing
+(beneficiary table + links/badges). FULL speaker notes are in every slide's notes panel.
+- SOURCE OF TRUTH: content follows the Session-15 prompt's slide spec verbatim; the few garbled
+  fragments in that prompt were reconstructed from docs/demo-narrative.md + spec §14 (e.g. "Net loss
+  vs HODL: -$134", the concentrated-liquidity callout, the `_computeIL()` lifecycle box, the
+  `PositionRegistered → Entry snapshot` table row, the GitHub/live-dashboard closing).
+- NUMBERS: where slides cite demo figures, used the REAL run (docs/demo-run-output.md): entry
+  notional 228.38, total coverage 12.51, payout 2.23 USDC bound by IL_CAP, buffer ~10,000 USDC; 292
+  tests as stated in the prompt. (Note spec §14's narrative arc uses different illustrative numbers —
+  10,000 entry / 43.75 payout; the deck uses the actual fork run, matching the frontend ?demo view.)
+- REPRODUCIBLE: regenerate with `python3 docs/build_deck.py` (rewrites the .pptx in place). No
+  LibreOffice/soffice on this box, so the deck was validated structurally (9 slides, correct
+  dimensions, notes present on all) not by visual render — eyeball it once in Google Slides.
+- The pptx SKILL.md referenced in the prompt is NOT present on this machine (sandbox-only path
+  /mnt/skills/...); built directly with python-pptx, which had to be pip-installed.
+-> docs/session-15-slides.md
+
+Previously completed (Session 14): Frontend dashboard — the LP coverage report (spec §4 Pillar 4).
 React 18 + Vite + Tailwind + viem SPA in `frontend/`, NO backend — reads public Sepolia RPC only.
 - TWO MODES (Option C): LIVE (default, or `?positionKey=0x…`) renders the real on-chain coverage
   report for any position; `?demo=true` renders a hardcoded fork narrative from

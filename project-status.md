@@ -1,5 +1,5 @@
 RangeGuard Project Status
-Last Updated: 2026-06-07 (Session 14 — frontend dashboard / coverage report)
+Last Updated: 2026-06-08 (Session 15 — Google Slides demo deck)
 How to use this file
 
 The Roadmap is the single source of truth for progress — one checkbox per item.
@@ -14,9 +14,18 @@ invariant; correctness before gas.
 
 Now
 
-Active target: Recorded 5-minute demo (spec §15). All protocol code, deployment, demo tooling, and
-the frontend dashboard are complete. Remaining work is the recording itself + the full README/demo
-video write-up afterward.
+Active target: Recorded 5-minute demo (spec §15). All protocol code, deployment, demo tooling, the
+frontend dashboard, and the presentation deck are complete. Remaining work is the recording itself +
+the full README/demo video write-up afterward.
+
+Just completed (Session 15): Google Slides demo deck — docs/RangeGuard-Demo-Deck.pptx. A 9-slide
+.pptx that imports cleanly into Google Slides (16:9 widescreen, dark-navy design system #0f1117 /
+accent #00d395 / Calibri, card panels, lifecycle + flywheel diagrams, event-mapping table). Every
+slide carries its full speaker notes in the notes panel. Content tracks the prompt's slide spec
+verbatim, with the few garbled fragments reconstructed from docs/demo-narrative.md + spec §14, and
+real demo numbers (entry 228.38, total coverage 12.51, payout 2.23 USDC / IL_CAP, 292 tests) from
+docs/demo-run-output.md. Built reproducibly via docs/build_deck.py (python-pptx 1.0.2).
+-> docs/session-15-slides.md
 
 Just completed (Session 14): Frontend dashboard — coverage report (frontend/, React 18 + Vite +
 Tailwind + viem, no backend). Renders the LP coverage report from LIVE Sepolia on-chain events;
@@ -246,6 +255,9 @@ Reactive contract ✅ (complete — see Completed section / session-10 doc)
 - [x] Frontend dashboard (Session 14: coverage report from LIVE Sepolia events; React+Vite+viem at
       frontend/; live mode + ?demo=true simulated mode; Vercel https://range-guard.vercel.app —
       see docs/session-14-frontend.md)
+- [x] Presentation deck (Session 15): docs/RangeGuard-Demo-Deck.pptx — 9-slide Google-Slides-ready
+      .pptx (16:9, dark-navy design system, Calibri, full speaker notes). Built with python-pptx via
+      docs/build_deck.py — see docs/session-15-slides.md
 - [ ] Recorded 5-minute demo (spec §15) + full README / demo video write-up ← NOW
 
 Phase 4: Protocol Invariants (cross-cutting)
