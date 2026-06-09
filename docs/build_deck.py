@@ -1,39 +1,57 @@
 #!/usr/bin/env python3
-"""Build RangeGuard-Demo-Deck.pptx — 9-slide Google-Slides-ready deck.
+"""Build RangeGuard-Demo-Deck.pptx — 6-slide Google-Slides-ready deck (rebuild).
 
-Design system (RangeGuard demo deck):
-  background  #0f1117   primary text #ffffff   accent #00d395
-  secondary   #94a3b8   amber        #f59e0b   danger #ef4444
-  card bg     #1e2433
-Font: Calibri (Google Slides import compatibility). 16:9 widescreen.
+Structure (Session-15 rebuild):
+  1 Title (logo-full + presenter + partner logos)
+  2 The Solution (headline + 5 bullets + tagline)
+  3 Economic Flywheel (two-row flow loop)
+  4 Five Pillars
+  5 Code Walkthrough (lifecycle + 2 amber callouts)
+  6 Closing (standalone logo + bullets + beneficiary table + partner logos + links)
+
+Logos are SVG but python-pptx embeds raster only, so docs/build_assets.py
+pre-renders each to a navy-background PNG (seamless on the #0f1117 slide).
+Run `python3 docs/build_assets.py` first, then this script.
+
+Design system: bg #0f1117 · white #ffffff · accent #00d395 · slate #94a3b8 ·
+amber #f59e0b · danger #ef4444 · card #1e2433 · Calibri · 16:9 widescreen.
 """
+import os
+from PIL import Image
 from pptx import Presentation
 from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.enum.shapes import MSO_SHAPE
-from pptx.oxml.ns import qn
 
 # ---------------------------------------------------------------- palette
-BG       = RGBColor(0x0F, 0x11, 0x17)
-WHITE    = RGBColor(0xFF, 0xFF, 0xFF)
-ACCENT   = RGBColor(0x00, 0xD3, 0x95)
-SLATE    = RGBColor(0x94, 0xA3, 0xB8)
-AMBER    = RGBColor(0xF5, 0x9E, 0x0B)
-DANGER   = RGBColor(0xEF, 0x44, 0x44)
-CARD     = RGBColor(0x1E, 0x24, 0x33)
+BG     = RGBColor(0x0F, 0x11, 0x17)
+WHITE  = RGBColor(0xFF, 0xFF, 0xFF)
+ACCENT = RGBColor(0x00, 0xD3, 0x95)
+SLATE  = RGBColor(0x94, 0xA3, 0xB8)
+AMBER  = RGBColor(0xF5, 0x9E, 0x0B)
+DANGER = RGBColor(0xEF, 0x44, 0x44)
+CARD   = RGBColor(0x1E, 0x24, 0x33)
 
 HEAD_FONT = "Calibri"
 BODY_FONT = "Calibri"
 CODE_FONT = "Consolas"
 
 EMU_IN = 914400
-SW, SH = 13.333, 7.5
+HERE = os.path.dirname(os.path.abspath(__file__))
+PNG = os.path.join(HERE, "assets", "png")
 
 prs = Presentation()
-prs.slide_width  = Emu(int(SW * EMU_IN))
-prs.slide_height = Emu(int(SH * EMU_IN))
+prs.slide_width  = Emu(int(13.333 * EMU_IN))
+prs.slide_height = Emu(int(7.5 * EMU_IN))
 BLANK = prs.slide_layouts[6]
+
+_ASPECT = {}
+def aspect(name):
+    if name not in _ASPECT:
+        w, h = Image.open(os.path.join(PNG, f"{name}.png")).size
+        _ASPECT[name] = w / h
+    return _ASPECT[name]
 
 
 # ---------------------------------------------------------------- helpers
@@ -41,68 +59,50 @@ def add_slide():
     s = prs.slides.add_slide(BLANK)
     r = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
     r.fill.solid(); r.fill.fore_color.rgb = BG
-    r.line.fill.background()
-    r.shadow.inherit = False
-    # send background to back
-    sp = r._element
-    sp.getparent().remove(sp)
-    s.shapes._spTree.insert(2, sp)
+    r.line.fill.background(); r.shadow.inherit = False
+    sp = r._element; sp.getparent().remove(sp); s.shapes._spTree.insert(2, sp)
     return s
 
 
-def _set_run(run, text, size, color, bold=False, font=BODY_FONT, italic=False):
-    run.text = text
+def _set_run(run, rd):
+    run.text = rd["t"]
     f = run.font
-    f.size = Pt(size); f.bold = bold; f.italic = italic
-    f.name = font
-    f.color.rgb = color
+    f.size = Pt(rd.get("size", 18)); f.bold = rd.get("bold", False)
+    f.italic = rd.get("italic", False); f.name = rd.get("font", BODY_FONT)
+    f.color.rgb = rd.get("color", WHITE)
 
 
-def txt(slide, x, y, w, h, lines, align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.TOP,
-        wrap=True):
-    """lines: list of paragraphs; each paragraph is list of run dicts or a single dict.
-       run dict: {t, size, color, bold, font, italic, space_before, space_after, line_spacing}
-    """
+def txt(slide, x, y, w, h, lines, align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.TOP, wrap=True):
     tb = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
-    tf = tb.text_frame
-    tf.word_wrap = wrap
-    tf.vertical_anchor = anchor
-    tf.margin_left = 0; tf.margin_right = 0
-    tf.margin_top = 0; tf.margin_bottom = 0
+    tf = tb.text_frame; tf.word_wrap = wrap; tf.vertical_anchor = anchor
+    tf.margin_left = 0; tf.margin_right = 0; tf.margin_top = 0; tf.margin_bottom = 0
     for i, para in enumerate(lines):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         p.alignment = align
         if isinstance(para, dict):
             para = [para]
         meta = para[0] if para else {}
-        if meta.get("space_before") is not None:
-            p.space_before = Pt(meta["space_before"])
-        if meta.get("space_after") is not None:
-            p.space_after = Pt(meta["space_after"])
-        if meta.get("line_spacing") is not None:
-            p.line_spacing = meta["line_spacing"]
+        if meta.get("space_before") is not None: p.space_before = Pt(meta["space_before"])
+        if meta.get("space_after") is not None:  p.space_after = Pt(meta["space_after"])
+        if meta.get("line_spacing") is not None: p.line_spacing = meta["line_spacing"]
         for rd in para:
-            r = p.add_run()
-            _set_run(r, rd["t"], rd.get("size", 18), rd.get("color", WHITE),
-                     rd.get("bold", False), rd.get("font", BODY_FONT),
-                     rd.get("italic", False))
+            _set_run(p.add_run(), rd)
     return tb
+
+
+def center(slide, x, y, w, h, paras, anchor=MSO_ANCHOR.MIDDLE):
+    return txt(slide, x, y, w, h, paras, align=PP_ALIGN.CENTER, anchor=anchor)
 
 
 def card(slide, x, y, w, h, fill=CARD, border=None, border_w=1.5, radius=0.08):
     sh = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
                                 Inches(x), Inches(y), Inches(w), Inches(h))
     sh.fill.solid(); sh.fill.fore_color.rgb = fill
-    if border is None:
-        sh.line.fill.background()
-    else:
-        sh.line.color.rgb = border; sh.line.width = Pt(border_w)
+    if border is None: sh.line.fill.background()
+    else: sh.line.color.rgb = border; sh.line.width = Pt(border_w)
     sh.shadow.inherit = False
-    # adjust corner radius
-    try:
-        sh.adjustments[0] = radius
-    except Exception:
-        pass
+    try: sh.adjustments[0] = radius
+    except Exception: pass
     return sh
 
 
@@ -114,467 +114,326 @@ def line(slide, x, y, w, color=ACCENT, weight=2.5):
     return sh
 
 
-def arrow(slide, x, y, w, h, color=ACCENT, shape=MSO_SHAPE.RIGHT_ARROW):
+def arrow_shape(slide, x, y, w, h, color=ACCENT, shape=MSO_SHAPE.RIGHT_ARROW):
     sh = slide.shapes.add_shape(shape, Inches(x), Inches(y), Inches(w), Inches(h))
     sh.fill.solid(); sh.fill.fore_color.rgb = color
     sh.line.fill.background(); sh.shadow.inherit = False
     return sh
 
 
+def img(slide, name, x, y, h):
+    """Place PNG by height (inches), preserving aspect. Returns (x, y, w, h)."""
+    w = h * aspect(name)
+    pic = slide.shapes.add_picture(os.path.join(PNG, f"{name}.png"),
+                                   Inches(x), Inches(y), height=Inches(h))
+    pic.line.fill.background()   # ensure no faint picture border at the raster edge
+    pic.shadow.inherit = False
+    return x, y, w, h
+
+
+def img_center(slide, name, cx, y, h):
+    w = h * aspect(name)
+    return img(slide, name, cx - w / 2, y, h)
+
+
 def label(slide, text):
-    txt(slide, 0.6, 0.42, 5.0, 0.4,
+    txt(slide, 0.92, 0.46, 6.0, 0.4,
         [[{"t": text, "size": 13, "color": ACCENT, "bold": True, "font": HEAD_FONT}]])
+    img(slide, "logo-icon", 0.5, 0.4, 0.3)   # subtle 24px-ish icon top-left
 
 
 def notes(slide, text):
     slide.notes_slide.notes_text_frame.text = text
 
 
-def centerbox(slide, x, y, w, h, paras, anchor=MSO_ANCHOR.MIDDLE):
-    return txt(slide, x, y, w, h, paras, align=PP_ALIGN.CENTER, anchor=anchor)
+def _text_w(s, size):
+    return len(s) * 0.46 * size / 72.0
 
 
-# ================================================================ SLIDE 1
+def hrow(slide, cy, items, gap=0.14, cx=6.6665):
+    """Lay mixed text/image items in one horizontal row, centered at cx, middle at cy."""
+    widths = []
+    for it in items:
+        if it["type"] == "text":
+            widths.append(_text_w(it["t"], it.get("size", 13)) + 0.04)
+        else:
+            widths.append(it["h"] * aspect(it["name"]))
+    total = sum(widths) + gap * (len(items) - 1)
+    x = cx - total / 2
+    for it, w in zip(items, widths):
+        if it["type"] == "text":
+            th = it.get("size", 13) / 72.0 * 1.8
+            txt(slide, x, cy - th / 2, w + 0.1, th,
+                [[{"t": it["t"], "size": it.get("size", 13),
+                   "color": it.get("color", SLATE), "bold": it.get("bold", False),
+                   "font": it.get("font", BODY_FONT)}]],
+                align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.MIDDLE, wrap=False)
+        else:
+            img(slide, it["name"], x, cy - it["h"] / 2, it["h"])
+        x += w + gap
+
+
+# ================================================================ SLIDE 1 — Title
 s = add_slide()
-label(s, "THE PROBLEM")
-centerbox(s, 1.0, 1.05, 11.33, 1.55, [
-    [{"t": "LPs Can Lose Value", "size": 46, "color": WHITE, "bold": True, "font": HEAD_FONT}],
-    [{"t": "Compared to Simply Holding", "size": 46, "color": WHITE, "bold": True, "font": HEAD_FONT}],
+# Full lockup composed natively: shield icon + crisp Calibri name + tagline
+img_center(s, "logo-icon", 6.6665, 1.0, 1.5)
+center(s, 1.0, 2.72, 11.33, 0.95,
+       [[{"t": "RangeGuard", "size": 48, "color": WHITE, "bold": True, "font": HEAD_FONT}]],
+       anchor=MSO_ANCHOR.TOP)
+center(s, 1.0, 3.78, 11.33, 0.5,
+       [[{"t": "Protect your liquidity. Guard your range.", "size": 20, "color": SLATE}]],
+       anchor=MSO_ANCHOR.TOP)
+center(s, 1.0, 4.62, 11.33, 0.95, [
+    [{"t": "Gary Kocsis", "size": 22, "color": WHITE, "bold": True, "space_after": 3}],
+    [{"t": "Uniswap Hook Incubator", "size": 16, "color": SLATE}],
 ], anchor=MSO_ANCHOR.TOP)
-centerbox(s, 1.5, 2.65, 10.33, 0.9, [
-    [{"t": "Impermanent loss is the gap between", "size": 19, "color": SLATE}],
-    [{"t": "HODL value and LP withdrawal value", "size": 19, "color": SLATE}],
-], anchor=MSO_ANCHOR.TOP)
-line(s, 4.665, 3.78, 4.0)
-txt(s, 1.4, 4.12, 10.5, 0.4,
-    [[{"t": "Impermanent loss happens when:", "size": 16, "color": ACCENT, "bold": True}]])
-bullets = [
-    "An LP deposits two assets — for example ETH + USDC",
-    "The price of ETH moves",
-    "The AMM automatically rebalances the LP's inventory",
-    "At withdrawal, the LP receives a token mix worth less than simply holding",
-]
-txt(s, 1.4, 4.62, 10.5, 2.4,
-    [[{"t": "•  " + b, "size": 19, "color": WHITE, "space_after": 9}] for b in bullets])
+hrow(s, 6.35, [
+    {"type": "text", "t": "Built on", "size": 14, "color": SLATE},
+    {"type": "img", "name": "uniswap-logo", "h": 0.34},
+    {"type": "text", "t": "·", "size": 18, "color": SLATE},
+    {"type": "text", "t": "Powered by", "size": 14, "color": SLATE},
+    {"type": "img", "name": "reactive-logo", "h": 0.30},
+], gap=0.22)
 notes(s,
-"Liquidity providers earn swap fees — but they also take on a hidden risk: impermanent loss. "
-"When an LP deposits ETH and USDC into an AMM, they are no longer simply holding those assets. "
-"As price moves, the pool automatically rebalances their inventory. At withdrawal, the LP may "
-"receive a token mix worth less than if they had simply held. In options terms, LPs are "
-"implicitly selling volatility — collecting fee premium but bearing downside when the market "
-"moves against them.")
+"Hello everyone, my name is Gary Kocsis, and I'm excited to present RangeGuard — Protect your "
+"liquidity. Guard your range. As many of you know, impermanent loss is the single biggest reason "
+"liquidity providers leave AMMs. Even with fee rewards, most LPs lose money when prices move — "
+"and there's no native, on-chain way to protect them. Until now.")
 
-# ================================================================ SLIDE 2
-s = add_slide()
-label(s, "THE PROBLEM")
-# banner
-card(s, 2.665, 0.95, 8.0, 0.95, fill=CARD)
-centerbox(s, 2.665, 0.95, 8.0, 0.95, [
-    [{"t": "📍 Day 0:  1 ETH = $2,000 USDC", "size": 18, "color": WHITE, "bold": True}],
-    [{"t": "Deposit: 1 ETH + 2,000 USDC = $4,000 total", "size": 15, "color": SLATE}],
-])
-# three columns
-cols = [
-    ("HODL", WHITE, [("ETH drops to $1,500", SLATE), ("", SLATE)],
-     "Value: $3,500", WHITE),
-    ("LP Withdrawal", WHITE, [("Pool rebalanced position", SLATE), ("Fees included", SLATE)],
-     "Value: $3,354", WHITE),
-    ("Impermanent Loss", AMBER, [("", SLATE), ("", SLATE)],
-     "Gap: -$146", DANGER),
-]
-cx = 0.85; cw = 3.7; gap = 0.3
-for i, (hdr, hc, mid, val, vc) in enumerate(cols):
-    x = cx + i * (cw + gap)
-    card(s, x, 2.2, cw, 2.55, fill=CARD)
-    centerbox(s, x, 2.4, cw, 0.5,
-              [[{"t": hdr, "size": 18, "color": hc, "bold": True}]], anchor=MSO_ANCHOR.TOP)
-    line(s, x + 0.6, 2.92, cw - 1.2, color=ACCENT, weight=1.5)
-    midparas = [[{"t": m or " ", "size": 14, "color": c, "space_after": 4}] for m, c in mid]
-    txt(s, x + 0.3, 3.15, cw - 0.6, 0.9, midparas, align=PP_ALIGN.CENTER)
-    sub = "(-4.2%)" if "Gap" in val else ""
-    valparas = [[{"t": val, "size": 21, "color": vc, "bold": True}]]
-    if sub:
-        valparas.append([{"t": sub, "size": 14, "color": vc, "space_before": 2}])
-    txt(s, x + 0.2, 4.0, cw - 0.4, 0.7, valparas, align=PP_ALIGN.CENTER)
-# red callout bottom left
-card(s, 0.85, 5.1, 5.6, 1.7, fill=CARD, border=DANGER, border_w=2)
-txt(s, 1.15, 5.35, 5.0, 1.3, [
-    [{"t": "⚠  Swap fees earned:   +$12", "size": 16, "color": WHITE, "bold": True, "space_after": 5}],
-    [{"t": "Impermanent loss:    -$146", "size": 16, "color": WHITE, "space_after": 5}],
-    [{"t": "Net loss vs HODL:    -$134", "size": 16, "color": DANGER, "bold": True}],
-])
-# accent callout bottom right
-card(s, 6.75, 5.1, 5.7, 1.7, fill=CARD, border=ACCENT, border_w=2)
-txt(s, 7.05, 5.3, 5.1, 1.4, [
-    [{"t": "Concentrated liquidity:", "size": 16, "color": ACCENT, "bold": True, "space_after": 4}],
-    [{"t": "Tighter ranges = more fees", "size": 15, "color": WHITE, "space_after": 3}],
-    [{"t": "AND amplified IL exposure", "size": 15, "color": WHITE, "space_after": 6}],
-    [{"t": "The tradeoff is unavoidable — until now.", "size": 14, "color": SLATE, "italic": True}],
-])
-notes(s,
-"Here's a concrete example. ETH starts at $2,000. You deposit 1 ETH and 2,000 USDC — $4,000 "
-"total. The price drops to $1,500. If you had simply held, your portfolio would be worth $3,500. "
-"But as an LP, the pool rebalanced your position as the price moved. Your withdrawal value — "
-"including fees — is only $3,354. You earned $12 in swap fees but lost $146 to impermanent loss. "
-"Net loss: $134. And in Uniswap v4's concentrated liquidity model, tighter ranges amplify this "
-"effect — more fees, but more IL exposure.\n\n"
-"Verbal transition: The next question is — can that downside be measured, covered, and paid out, "
-"directly from the pool itself?")
-
-# ================================================================ SLIDE 3
+# ================================================================ SLIDE 2 — The Solution
 s = add_slide()
 label(s, "THE SOLUTION")
-centerbox(s, 1.0, 1.55, 11.33, 1.5, [
-    [{"t": "RangeGuard turns impermanent loss", "size": 36, "color": WHITE, "bold": True, "font": HEAD_FONT}],
-    [{"t": "into an earned, capped, on-chain claim.", "size": 36, "color": WHITE, "bold": True, "font": HEAD_FONT}],
+center(s, 1.0, 1.05, 11.33, 1.2, [
+    [{"t": "RangeGuard turns impermanent loss", "size": 30, "color": WHITE, "bold": True, "font": HEAD_FONT}],
+    [{"t": "into an earned, capped, on-chain claim.", "size": 30, "color": WHITE, "bold": True, "font": HEAD_FONT}],
 ], anchor=MSO_ANCHOR.TOP)
-centerbox(s, 1.0, 3.35, 11.33, 1.6, [
-    [{"t": "Earned over time.", "size": 22, "color": SLATE, "space_after": 4}],
-    [{"t": "Funded by swap activity.", "size": 22, "color": SLATE, "space_after": 4}],
-    [{"t": "Settled automatically.", "size": 22, "color": SLATE, "space_after": 14}],
-    [{"t": "Accrual calculated using Actual/365 Fixed —", "size": 17, "color": SLATE, "italic": True}],
-    [{"t": "a standard financial day-count convention.", "size": 17, "color": SLATE, "italic": True}],
-], anchor=MSO_ANCHOR.TOP)
-centerbox(s, 1.0, 6.2, 11.33, 0.7,
-          [[{"t": "“Protect your liquidity. Guard your range.”",
-             "size": 24, "color": ACCENT, "bold": True, "italic": True}]])
+sol_bullets = [
+    ("Coverage accrues only while in range —", "exposure-weighted, not time-weighted"),
+    ("Day-count convention (Actual/365 Fixed) —", "predictable, auditable, comparable across pools"),
+    ("Buffer funded by dynamic fee skimming —", "sustainable, no external subsidies"),
+    ("Automatic payout on withdrawal —", "capped by earned coverage, buffer health, and protocol params"),
+    ("Reactive Network integration —", "range transitions detected cross-chain, no keepers"),
+]
+y = 2.55
+for top, sub in sol_bullets:
+    txt(s, 1.5, y, 10.5, 0.78, [
+        [{"t": "▸  ", "size": 17, "color": ACCENT, "bold": True},
+         {"t": top, "size": 17, "color": WHITE, "bold": True}],
+        [{"t": "     " + sub, "size": 15, "color": SLATE, "space_before": 1}],
+    ])
+    y += 0.82
+center(s, 1.0, 6.85, 11.33, 0.45,
+       [[{"t": "“Protect your liquidity. Guard your range.”",
+          "size": 19, "color": ACCENT, "bold": True, "italic": True}]])
 notes(s,
-"RangeGuard is a Uniswap v4 hook that provides native, on-chain impermanent loss coverage for "
-"liquidity providers. No premium to pay upfront. No claim form. No off-chain infrastructure. "
-"Coverage is built directly into the pool. The day-count basis is important because this is not "
-"an arbitrary reward counter — it is coverage accrual, calculated using the same Actual/365 "
-"Fixed convention used in fixed-income finance. LPs can estimate their coverage before "
-"depositing, and anyone can verify every accrual event.")
+"RangeGuard brings native, transparent IL coverage directly into a Uniswap v4 pool. When an LP "
+"provides liquidity, they start earning coverage — but only while their position is in range and "
+"exposed to IL risk. Coverage accrues using a day-count convention — just like traditional "
+"finance — so LPs can see exactly how much protection they're earning and compare it across "
+"pools. The coverage buffer is funded by a small configurable portion of trading fees via "
+"Uniswap v4's dynamic fee system — sustainable, no external subsidies. When an LP withdraws, the "
+"hook automatically calculates their impermanent loss and pays out a capped reimbursement — "
+"bounded by what they've earned, the buffer's health, and protocol parameters. And the system "
+"runs autonomously. RangeGuard integrates with the Reactive Network — a cross-chain automation "
+"layer running on Lasna — so range transitions are detected and recorded automatically. No "
+"keeper bots. No off-chain infrastructure.")
 
-# ================================================================ SLIDE 4
+# ================================================================ SLIDE 3 — Economic Flywheel
 s = add_slide()
 label(s, "THE SOLUTION")
-centerbox(s, 1.0, 0.85, 11.33, 0.7,
-          [[{"t": "Self-Funding by Design", "size": 32, "color": WHITE, "bold": True, "font": HEAD_FONT}]],
-          anchor=MSO_ANCHOR.TOP)
-# circular flow: 6 boxes around an ellipse
-flow = [
-    ("LPs provide\nliquidity", False),
-    ("Traders use\nthe pool", False),
-    ("Swaps generate\nfees", False),
-    ("A small portion\nfunds the buffer", True),
-    ("Buffer pays\ncapped IL claims", True),
-    ("LPs are\nprotected", False),
-]
-import math
-cxp, cyp = 6.665, 3.95   # center
-rx, ry = 4.05, 1.75      # radius
-bw, bh = 2.35, 0.95
-positions = []
-# place at angles starting top, clockwise
-angles = [-90, -30, 30, 90, 150, 210]
-for ang in angles:
-    a = math.radians(ang)
-    px = cxp + rx * math.cos(a) - bw / 2
-    py = cyp + ry * math.sin(a) - bh / 2
-    positions.append((px, py))
-# arrows (between consecutive box centers) — draw simple chevrons near midpoints
-for i in range(6):
-    nx = (i + 1) % 6
-    c1 = (positions[i][0] + bw / 2, positions[i][1] + bh / 2)
-    c2 = (positions[nx][0] + bw / 2, positions[nx][1] + bh / 2)
-    mx, my = (c1[0] + c2[0]) / 2, (c1[1] + c2[1]) / 2
-    txt(s, mx - 0.35, my - 0.25, 0.7, 0.5,
-        [[{"t": "→", "size": 26, "color": ACCENT, "bold": True}]],
-        align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
-for (text, hl), (px, py) in zip(flow, positions):
-    bd = ACCENT if hl else None
-    card(s, px, py, bw, bh, fill=CARD, border=bd, border_w=2)
-    parts = text.split("\n")
-    centerbox(s, px, py, bw, bh,
-              [[{"t": p, "size": 14, "color": WHITE, "bold": hl}] for p in parts])
-centerbox(s, 1.0, 6.65, 11.33, 0.55,
-          [[{"t": "Swap activity funds the buffer that protects LPs.",
-             "size": 19, "color": ACCENT, "bold": True}]])
+center(s, 1.0, 0.95, 11.33, 0.6,
+       [[{"t": "Self-Funding by Design", "size": 30, "color": WHITE, "bold": True, "font": HEAD_FONT}]],
+       anchor=MSO_ANCHOR.TOP)
+# two-row flow: 3 columns
+bw, bh = 3.35, 1.05
+c = [1.05, 4.99, 8.93]   # column x's
+r1y, r2y = 2.25, 4.35
+row1 = ["LPs provide\nliquidity", "Traders use\nthe pool", "Swaps generate\nfees"]
+row2 = ["LPs are\nprotected", "Buffer pays\ncapped IL", "Buffer slice\nskimmed"]
+row2_hl = [False, True, True]
+def fbox(x, y, text, hl):
+    card(s, x, y, bw, bh, fill=CARD, border=(ACCENT if hl else None), border_w=2)
+    center(s, x, y, bw, bh,
+           [[{"t": ln, "size": 15, "color": WHITE, "bold": hl}] for ln in text.split("\n")])
+for i in range(3):
+    fbox(c[i], r1y, row1[i], False)
+    fbox(c[i], r2y, row2[i], row2_hl[i])
+# row1 right arrows (between cols)
+for i in range(2):
+    ax = c[i] + bw; aw = c[i+1] - (c[i] + bw)
+    arrow_shape(s, ax + 0.05, r1y + bh/2 - 0.18, aw - 0.1, 0.36, color=ACCENT, shape=MSO_SHAPE.RIGHT_ARROW)
+# row2 left arrows (between cols, pointing left)
+for i in range(2):
+    ax = c[i] + bw; aw = c[i+1] - (c[i] + bw)
+    arrow_shape(s, ax + 0.05, r2y + bh/2 - 0.18, aw - 0.1, 0.36, color=ACCENT, shape=MSO_SHAPE.LEFT_ARROW)
+# down arrow on right column (row1 -> row2)
+arrow_shape(s, c[2] + bw/2 - 0.18, r1y + bh + 0.06, 0.36, r2y - (r1y + bh) - 0.12,
+            color=ACCENT, shape=MSO_SHAPE.DOWN_ARROW)
+# up arrow on left column (row2 -> row1)
+arrow_shape(s, c[0] + bw/2 - 0.18, r1y + bh + 0.06, 0.36, r2y - (r1y + bh) - 0.12,
+            color=ACCENT, shape=MSO_SHAPE.UP_ARROW)
+center(s, 1.0, 6.7, 11.33, 0.5,
+       [[{"t": "Swap activity funds the buffer that protects LPs.",
+          "size": 19, "color": ACCENT, "bold": True}]])
 notes(s,
 "The economics are self-sustaining. LPs provide liquidity, traders use the pool, swaps generate "
-"fees, and a small portion of every fee — the buffer slice — funds the coverage buffer. When a "
-"position closes, the buffer pays the capped IL claim. The buffer grows from the very swap "
-"activity that that LP liquidity enables. No external capital required.")
+"fees, a buffer slice is skimmed that funds the coverage buffer, and the buffer pays capped IL "
+"claims. The buffer grows from the same swap activity that LP liquidity enables. No external "
+"capital required.")
 
-# ================================================================ SLIDE 5
+# ================================================================ SLIDE 4 — Five Pillars
 s = add_slide()
 label(s, "THE SOLUTION")
-centerbox(s, 1.0, 0.8, 11.33, 0.7,
-          [[{"t": "How RangeGuard Works: Five Pillars", "size": 30, "color": WHITE, "bold": True, "font": HEAD_FONT}]],
-          anchor=MSO_ANCHOR.TOP)
+center(s, 1.0, 0.95, 11.33, 0.6,
+       [[{"t": "How RangeGuard Works: Five Pillars", "size": 29, "color": WHITE, "bold": True, "font": HEAD_FONT}]],
+       anchor=MSO_ANCHOR.TOP)
 pillars = [
     ("1", "Accrual Gating", ["Coverage accrues only while the position is in range"], False),
     ("2", "Buffer Funding", ["A portion of every swap fee funds the coverage buffer"], False),
     ("3", "Claim Settlement", ["IL computed and paid automatically on withdrawal",
                                "Payout = min(covered IL, earned coverage, buffer cap)"], False),
     ("4", "LP Transparency  ★", ["A verifiable, day-by-day coverage report —",
-                                       "built entirely from on-chain events"], True),
+                                 "built entirely from on-chain events"], True),
     ("5", "Pool Configuration", ["Immutable parameters set once at pool initialization"], False),
 ]
-y = 1.75
+y = 1.8
 for num, title, body, hl in pillars:
-    rowh = 0.78 + 0.26 * (len(body) - 1)
+    rowh = 0.74 + 0.26 * (len(body) - 1)
     if hl:
-        card(s, 0.8, y - 0.08, 11.73, rowh + 0.12, fill=CARD, border=ACCENT, border_w=2)
-    txt(s, 1.05, y, 0.7, rowh, [[{"t": num, "size": 26, "color": ACCENT, "bold": True}]],
-        anchor=MSO_ANCHOR.TOP)
-    paras = [[{"t": title, "size": 19, "color": WHITE, "bold": True, "space_after": 3}]]
+        card(s, 0.85, y - 0.08, 11.63, rowh + 0.12, fill=CARD, border=ACCENT, border_w=2)
+    txt(s, 1.1, y, 0.7, rowh, [[{"t": num, "size": 25, "color": ACCENT, "bold": True}]])
+    paras = [[{"t": title, "size": 19, "color": WHITE, "bold": True, "space_after": 2}]]
     for b in body:
-        paras.append([{"t": b, "size": 15, "color": SLATE, "space_after": 1}])
-    txt(s, 1.75, y, 10.6, rowh, paras, anchor=MSO_ANCHOR.TOP)
+        paras.append([{"t": b, "size": 14.5, "color": SLATE, "space_after": 1}])
+    txt(s, 1.8, y, 10.5, rowh, paras)
     y += rowh + 0.16
-centerbox(s, 1.0, 6.85, 11.33, 0.45,
-          [[{"t": "Every pillar is enforced on-chain. No off-chain assumptions.",
-             "size": 17, "color": ACCENT, "bold": True}]])
+center(s, 1.0, 6.85, 11.33, 0.45,
+       [[{"t": "Every pillar is enforced on-chain. No off-chain assumptions.",
+          "size": 17, "color": ACCENT, "bold": True}]])
 notes(s,
-"RangeGuard is built on five pillars. Accrual gating — coverage only earns while in range. "
-"Buffer funding — every swap contributes automatically. Claim settlement — IL is computed and "
-"paid in the same withdrawal transaction, capped by three limits: covered IL, earned coverage, "
-"and buffer capacity. LP transparency — the key differentiator — a verifiable day-by-day "
-"coverage statement from pure on-chain events. And pool configuration — immutable parameters, so "
-"LPs always know what they signed up for.\n\n"
-"Verbal transition: Let me show you the three core functions that make this work.")
+"RangeGuard is built on five pillars. Accrual gating — coverage only earns while in range. Buffer "
+"funding — every swap contributes automatically. Claim settlement — IL is computed and paid in "
+"the same withdrawal transaction, capped by three limits: covered IL, earned coverage, and "
+"buffer capacity. LP transparency — the key differentiator — a verifiable day-by-day coverage "
+"statement from pure on-chain events. And pool configuration — immutable parameters, so LPs "
+"always know what they signed up for.\n\n"
+"Verbal transition: Let me show you the core functions that make this work.")
 
-# ================================================================ SLIDE 6
+# ================================================================ SLIDE 5 — Code Walkthrough
 s = add_slide()
 label(s, "UNDER THE HOOD")
-centerbox(s, 1.0, 0.8, 11.33, 0.7,
-          [[{"t": "How Coverage Becomes a Claim", "size": 30, "color": WHITE, "bold": True, "font": HEAD_FONT}]],
-          anchor=MSO_ANCHOR.TOP)
-# horizontal lifecycle flow — 6 boxes
-steps = [
-    ("LP Deposits", False),
-    ("_accrue()", True),
-    ("afterSwap()", False),
-    ("_computeIL()", False),
-    ("_computePayout()", True),
-    ("ClaimSettled", False),
-]
-n = len(steps)
-fx = 0.55; fw = 1.78; fgap = (12.78 - 0.55 - n * fw) / (n - 1)
-fy = 2.15; fh = 0.95
-for i, (label_t, hl) in enumerate(steps):
+center(s, 1.0, 0.95, 11.33, 0.6,
+       [[{"t": "How Coverage Becomes a Claim", "size": 29, "color": WHITE, "bold": True, "font": HEAD_FONT}]],
+       anchor=MSO_ANCHOR.TOP)
+steps = ["LP Deposits", "_accrue()", "afterSwap()", "_computeIL()", "_computePayout()", "ClaimSettled"]
+n = len(steps); fx = 0.55; fw = 1.78; fgap = (12.78 - 0.55 - n * fw) / (n - 1)
+fy = 2.2; fh = 0.95
+for i, lab in enumerate(steps):
     x = fx + i * (fw + fgap)
-    bd = ACCENT if hl else None
-    card(s, x, fy, fw, fh, fill=CARD, border=bd, border_w=2)
-    centerbox(s, x, fy, fw, fh,
-              [[{"t": label_t, "size": 13.5, "color": (ACCENT if hl else WHITE),
-                 "bold": True, "font": CODE_FONT}]])
+    card(s, x, fy, fw, fh, fill=CARD, border=ACCENT, border_w=2)   # all same color
+    center(s, x, fy, fw, fh,
+           [[{"t": lab, "size": 11.5, "color": WHITE, "bold": True, "font": CODE_FONT}]])
     if i < n - 1:
         ax = x + fw + (fgap - 0.4) / 2
         txt(s, ax, fy + fh/2 - 0.25, 0.5, 0.5,
             [[{"t": "→", "size": 24, "color": ACCENT, "bold": True}]],
             align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
-# two amber callouts
-card(s, 0.85, 3.85, 5.6, 1.9, fill=CARD, border=AMBER, border_w=2)
-txt(s, 1.15, 4.1, 5.05, 1.45, [
-    [{"t": "⚡  Swaps never iterate positions —", "size": 16, "color": AMBER, "bold": True, "space_after": 5}],
-    [{"t": "accrual is lazy and position-specific.", "size": 15, "color": WHITE, "space_after": 4}],
-    [{"t": "O(1) gas on every swap.", "size": 15, "color": WHITE, "bold": True}],
+card(s, 0.85, 3.95, 5.6, 1.95, fill=CARD, border=AMBER, border_w=2)
+txt(s, 1.15, 4.2, 5.05, 1.5, [
+    [{"t": "⚡  Swaps never iterate positions", "size": 16, "color": AMBER, "bold": True, "space_after": 6}],
+    [{"t": "Accrual is lazy, position-specific", "size": 15, "color": WHITE, "space_after": 4}],
+    [{"t": "O(1) gas on every swap", "size": 15, "color": WHITE, "bold": True}],
 ])
-card(s, 6.75, 3.85, 5.7, 1.9, fill=CARD, border=AMBER, border_w=2)
-txt(s, 7.05, 4.1, 5.15, 1.5, [
-    [{"t": "⚡  Coverage uses Actual/365 Fixed", "size": 16, "color": AMBER, "bold": True, "space_after": 5}],
-    [{"t": "day-count convention —", "size": 15, "color": WHITE, "space_after": 4}],
-    [{"t": "the same standard used in", "size": 15, "color": WHITE, "space_after": 2}],
-    [{"t": "fixed-income finance.", "size": 15, "color": WHITE, "bold": True}],
+card(s, 6.75, 3.95, 5.7, 1.95, fill=CARD, border=AMBER, border_w=2)
+txt(s, 7.05, 4.2, 5.2, 1.55, [
+    [{"t": "⚡  Actual/365 Fixed day-count", "size": 16, "color": AMBER, "bold": True, "space_after": 6}],
+    [{"t": "Coverage = Notional × APR × (days ÷ 365)", "size": 14, "color": WHITE, "font": CODE_FONT, "space_after": 4}],
+    [{"t": "Same convention as fixed-income finance", "size": 15, "color": WHITE}],
 ])
-centerbox(s, 1.0, 6.35, 11.33, 0.5,
-          [[{"t": "Four functions. One atomic lifecycle. All on-chain.",
-             "size": 18, "color": ACCENT, "bold": True}]])
+center(s, 1.0, 6.4, 11.33, 0.5,
+       [[{"t": "One lifecycle. Fully on-chain. No off-chain assumptions.",
+          "size": 18, "color": ACCENT, "bold": True}]])
 notes(s,
-"Before jumping into the IDE, here's the core code path. When an LP deposits, the hook registers "
-"their position. Coverage is then updated through _accrue, which only adds coverage while the "
-"current tick is inside the LP's range — accrual is lazy and position-specific, so swaps never "
-"iterate positions. afterSwap funds the buffer from every trade. On withdrawal, _computeIL "
-"compares the HODL value against the actual withdrawal value to get raw impermanent loss. Then "
-"_computePayout applies the three caps to determine the final claim. Let me start with _accrue — "
-"because that's the core engine for earned coverage.\n\n"
-"IDE narration — _accrue: Range gate — coverage only accrues inside the LP's range. Year "
-"fraction uses the pool's immutable day-count basis — if the LP is in range for 15 actual days, "
-"they earn exactly 15/365 of the annual coverage amount. The day-count convention turns coverage "
-"from a black-box reward into an auditable financial accrual. _computePayout: Three caps applied "
-"in order — IL cap, earned coverage cap, buffer cap. Payout is the minimum of all three. The "
-"limiting factor is recorded so the LP knows exactly why they received what they received.")
+"Before the demo, here's the core code path. _accrue advances coverage lazily — only while in "
+"range, using Actual/365 Fixed day-count math. _computePayout applies three caps in order. The "
+"day-count convention turns coverage from a black-box reward into an auditable financial "
+"accrual. Let me show you.\n\n"
+"IDE narration — _accrue: range gate first — if the tick is outside the LP's bounds, delta is "
+"zero. If in range — year fraction from day-count basis, multiplied by entry notional and APR. "
+"Fifteen days in range earns exactly 15/365 of the annual coverage amount. _computePayout: three "
+"caps in order — IL cap, earned coverage cap, buffer cap. Minimum of all three. Limiting factor "
+"is recorded so the LP knows exactly why they received what they received.")
 
-# ================================================================ SLIDE 7
+# ================================================================ SLIDE 6 — Closing
 s = add_slide()
-label(s, "LIVE DEMO")
-centerbox(s, 1.0, 0.8, 11.33, 1.3, [
-    [{"t": "A Complete LP Lifecycle", "size": 30, "color": WHITE, "bold": True, "font": HEAD_FONT}],
-    [{"t": "on Sepolia Testnet", "size": 30, "color": WHITE, "bold": True, "font": HEAD_FONT}],
-], anchor=MSO_ANCHOR.TOP)
-demo_cols = [
-    ("📍 Setup", ["Live Sepolia hook", "Buffer seeded", "10,000 USDC"]),
-    ("📈 Lifecycle", ["LP deposits", "In-range accrual", "Range transition",
-                      "out + back in", "Buffer self-funds"]),
-    ("💰 Settlement", ["Full withdrawal", "IL computed", "Three caps applied", "ClaimSettled"]),
-]
-cw = 3.7; gap = 0.3; cx = 0.85; cy = 2.25; ch = 2.55
-for i, (hdr, items) in enumerate(demo_cols):
-    x = cx + i * (cw + gap)
-    card(s, x, cy, cw, ch, fill=CARD)
-    centerbox(s, x, cy + 0.18, cw, 0.45,
-              [[{"t": hdr, "size": 18, "color": ACCENT, "bold": True}]], anchor=MSO_ANCHOR.TOP)
-    line(s, x + 0.6, cy + 0.72, cw - 1.2, color=ACCENT, weight=1.5)
-    paras = [[{"t": it, "size": 14.5, "color": WHITE, "space_after": 5}] for it in items]
-    txt(s, x + 0.4, cy + 0.95, cw - 0.8, ch - 1.05, paras, align=PP_ALIGN.CENTER)
-# reactive callout full width
-card(s, 0.85, 5.05, 11.63, 1.25, fill=CARD, border=ACCENT, border_w=2)
-txt(s, 1.2, 5.25, 11.0, 0.95, [
-    [{"t": "⚡  Reactive Network (Lasna) monitors the hook autonomously",
-      "size": 16, "color": ACCENT, "bold": True, "space_after": 3}],
-    [{"t": "Range transitions detected cross-chain — no keepers", "size": 14.5, "color": WHITE, "space_after": 2}],
-    [{"t": "checkpointAndEmitOutOfRange fires automatically", "size": 14.5, "color": WHITE, "font": CODE_FONT}],
-])
-centerbox(s, 1.0, 6.5, 11.33, 0.8, [
-    [{"t": "Every event is a real on-chain transaction.", "size": 14.5, "color": SLATE, "space_after": 1}],
-    [{"t": "Fork of live Sepolia state — vm.warp simulates 45 days.", "size": 14.5, "color": SLATE}],
-])
-notes(s,
-"Let's see it in action. This is a 45-day LP lifecycle running against a fork of the live Sepolia "
-"deployment. As the position moves in and out of range, the Reactive Network on Lasna monitors "
-"the hook autonomously. When the tick crosses the LP's range boundary, it detects the transition "
-"and fires a callback back to Sepolia — no keepers, no bots, no off-chain infrastructure. Every "
-"number you see comes from the actual hook contract. Let's run it.")
-
-# ================================================================ SLIDE 8
-s = add_slide()
-label(s, "THE KEY DIFFERENTIATOR")
-centerbox(s, 1.0, 0.78, 11.33, 1.25, [
-    [{"t": "Every LP Gets a Verifiable", "size": 29, "color": WHITE, "bold": True, "font": HEAD_FONT}],
-    [{"t": "Coverage Statement", "size": 29, "color": WHITE, "bold": True, "font": HEAD_FONT}],
-], anchor=MSO_ANCHOR.TOP)
-# two columns
-twocols = [
-    ("📋 Traditional", ["Off-chain records", "Trust the platform",
-                        "Opaque calculations", "No breakdown"], SLATE),
-    ("🔍 RangeGuard", ["Pure on-chain events", "Verify yourself",
-                       "Every row auditable", "LimitingFactor shown"], ACCENT),
-]
-cw = 5.55; gap = 0.5; cx = 0.9; cy = 2.05; ch = 2.0
-for i, (hdr, items, hc) in enumerate(twocols):
-    x = cx + i * (cw + gap)
-    card(s, x, cy, cw, ch, fill=CARD)
-    centerbox(s, x, cy + 0.15, cw, 0.42,
-              [[{"t": hdr, "size": 17, "color": hc, "bold": True}]], anchor=MSO_ANCHOR.TOP)
-    line(s, x + 0.7, cy + 0.62, cw - 1.4, color=hc, weight=1.5)
-    txt(s, x + 0.5, cy + 0.8, cw - 1.0, ch - 0.9,
-        [[{"t": it, "size": 14.5, "color": WHITE, "space_after": 4}] for it in items],
-        align=PP_ALIGN.CENTER)
-# event mapping table
-ty = 4.25
-card(s, 0.9, ty, 11.53, 2.05, fill=CARD)
-rows = [
-    ("Event", "Coverage Report Row", True),
-    ("PositionRegistered", "Entry snapshot (notional, APR, day-count basis)", False),
-    ("AccrualUpdated", "Each accrual period (dt, delta, isInRange)", False),
-    ("PositionOutOfRange", "Coverage paused (Reactive Network detected)", False),
-    ("PositionBackInRange", "Coverage resumed (Reactive Network detected)", False),
-    ("ClaimSettled", "Final settlement (IL, payout, limitingFactor)", False),
-]
-ry0 = ty + 0.12
-rh = 0.31
-for j, (ev, row, hdr) in enumerate(rows):
-    yy = ry0 + j * rh
-    col1 = ACCENT if hdr else WHITE
-    col2 = SLATE if hdr else SLATE
-    txt(s, 1.2, yy, 4.0, rh,
-        [[{"t": ev, "size": 13.5, "color": col1, "bold": hdr, "font": CODE_FONT}]],
-        anchor=MSO_ANCHOR.MIDDLE)
-    txt(s, 5.0, yy, 0.4, rh, [[{"t": "→", "size": 13, "color": ACCENT, "bold": True}]],
-        anchor=MSO_ANCHOR.MIDDLE)
-    txt(s, 5.5, yy, 6.7, rh,
-        [[{"t": row, "size": 13.5, "color": (ACCENT if hdr else WHITE), "bold": hdr}]],
-        anchor=MSO_ANCHOR.MIDDLE)
-    if hdr:
-        line(s, 1.2, yy + rh, 11.0, color=SLATE, weight=1)
-centerbox(s, 1.0, 6.5, 11.33, 0.8, [
-    [{"t": "No off-chain assumptions. Fully verifiable.", "size": 15, "color": ACCENT, "bold": True, "space_after": 1}],
-    [{"t": "Built on Reactive Network cross-chain automation.", "size": 15, "color": ACCENT, "bold": True}],
-])
-notes(s,
-"This is the key differentiator. Every LP gets a verifiable, day-by-day coverage statement — "
-"built entirely from on-chain events. Every row maps to a real transaction. The accrual periods "
-"show whether the position was in range. Because the accrual basis is explicit — the day-count "
-"convention, the APR, the entry notional — every row can be independently recomputed from the "
-"event data. It's not a black box. The range transitions were detected autonomously by the "
-"Reactive Network running on Lasna. And the settlement row shows exactly which cap was the "
-"binding constraint. Let me show you.\n\n"
-"Browser narration — Demo mode: Here's the full 45-day lifecycle. Every row maps to a real "
-"on-chain event. Accrual periods show in range, earning coverage. The out-of-range pause "
-"detected by the Reactive Network. Resumption. Final settlement — IL cap was the binding "
-"constraint, payout 2.23 USDC. Each accrual row shows elapsed time, delta earned using A/365F, "
-"and the in-range flag. The day-count convention makes this auditable — not a black box. Live "
-"mode: Reading real events from Sepolia right now. Every LP in this pool can pull up their own "
-"verifiable coverage statement. Buffer at 10,000 USDC, growing from real swap fees. "
-"Self-sustaining by design.\n\n"
-"Verbal transition: RangeGuard makes IL coverage predictable, auditable, and comparable — "
-"because the day-count convention turns coverage from a black-box reward into an auditable "
-"financial accrual.")
-
-# ================================================================ SLIDE 9
-s = add_slide()
-centerbox(s, 1.0, 0.5, 11.33, 0.7,
-          [[{"t": "“Protect your liquidity. Guard your range.”",
-             "size": 28, "color": ACCENT, "bold": True, "italic": True}]],
-          anchor=MSO_ANCHOR.TOP)
+# Standalone lockup composed natively: shield icon + crisp Calibri name, centered
+_name_w = 2.05  # generous, avoids wrap of bold 27pt "RangeGuard"
+_icon_h = 0.52
+_grp = _icon_h + 0.12 + _name_w
+_gx = 6.6665 - _grp / 2
+img(s, "logo-icon", _gx, 0.29, _icon_h)
+txt(s, _gx + _icon_h + 0.12, 0.3, _name_w, 0.5,
+    [[{"t": "RangeGuard", "size": 27, "color": WHITE, "bold": True, "font": HEAD_FONT}]],
+    align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.MIDDLE, wrap=False)
+center(s, 1.0, 0.95, 11.33, 0.55,
+       [[{"t": "“Protect your liquidity. Guard your range.”",
+          "size": 22, "color": ACCENT, "bold": True, "italic": True}]])
 fbul = [
     "Native IL coverage — built into the pool, not bolted on",
     "Self-funding buffer — swap fees cover the claims",
     "Capped payouts — actuarially sound, buffer protected",
     "Fully auditable — every accrual verifiable on-chain",
 ]
-txt(s, 1.5, 1.45, 10.3, 1.7,
-    [[{"t": "✓  " + b, "size": 17, "color": WHITE, "space_after": 6}] for b in fbul])
+txt(s, 2.3, 1.65, 9.0, 1.25,
+    [[{"t": "✓  ", "size": 16, "color": ACCENT, "bold": True},
+      {"t": b, "size": 16, "color": WHITE}] for b in
+     [f for f in fbul]],
+    )
 # beneficiary table
-ty = 3.35
-card(s, 1.5, ty, 10.33, 1.85, fill=CARD)
+ty = 3.0
+card(s, 1.7, ty, 9.93, 1.6, fill=CARD)
 bens = [
     ("Who Benefits", "Why It Matters", True),
     ("Passive LPs", "Downside protection without complex hedging", False),
     ("Protocols / DAOs", "Deeper liquidity without reliance on emissions", False),
     ("Uniswap Ecosystem", "Durable liquidity, tighter spreads, better execution", False),
 ]
-by0 = ty + 0.14; brh = 0.42
+by0 = ty + 0.12; brh = 0.36
 for j, (a, b, hdr) in enumerate(bens):
     yy = by0 + j * brh
-    txt(s, 1.85, yy, 3.4, brh,
-        [[{"t": a, "size": 14.5, "color": (ACCENT if hdr else WHITE), "bold": True}]],
+    txt(s, 2.05, yy, 3.3, brh,
+        [[{"t": a, "size": 13.5, "color": (ACCENT if hdr else WHITE), "bold": True}]],
         anchor=MSO_ANCHOR.MIDDLE)
-    txt(s, 5.3, yy, 6.3, brh,
-        [[{"t": b, "size": 14, "color": (SLATE if hdr else SLATE)}]],
-        anchor=MSO_ANCHOR.MIDDLE)
+    txt(s, 5.4, yy, 6.0, brh,
+        [[{"t": b, "size": 13, "color": SLATE}]], anchor=MSO_ANCHOR.MIDDLE)
     if hdr:
-        line(s, 1.85, yy + brh - 0.02, 9.6, color=SLATE, weight=1)
-centerbox(s, 1.0, 5.4, 11.33, 0.5,
-          [[{"t": "Earned over time. Funded by swaps. Settled on-chain.",
-             "size": 20, "color": ACCENT, "bold": True}]])
-line(s, 4.665, 6.0, 4.0, color=SLATE, weight=1)
-centerbox(s, 1.0, 6.15, 11.33, 0.5, [
-    [{"t": "range-guard.vercel.app    ·    github.com/garykocsis/RangeGuard",
-      "size": 15, "color": WHITE, "bold": True}],
-])
-centerbox(s, 1.0, 6.6, 11.33, 0.35,
-          [[{"t": "Built on Uniswap v4   ·   Powered by Reactive Network   ·   Deployed on Sepolia",
-             "size": 13, "color": SLATE}]])
-centerbox(s, 1.0, 6.98, 11.33, 0.32,
-          [[{"t": "292 tests passing   ·   Fuzz tested   ·   Invariant tested",
-             "size": 12, "color": SLATE}]])
+        line(s, 2.05, yy + brh - 0.02, 9.2, color=SLATE, weight=1)
+center(s, 1.0, 4.78, 11.33, 0.45,
+       [[{"t": "Earned over time. Funded by swaps. Settled on-chain.",
+          "size": 19, "color": ACCENT, "bold": True}]])
+line(s, 5.165, 5.3, 3.0, color=SLATE, weight=1)
+center(s, 1.0, 5.42, 11.33, 0.4,
+       [[{"t": "🔗  range-guard.vercel.app      ·      github.com/garykocsis/RangeGuard",
+          "size": 14, "color": WHITE, "bold": True}]])
+hrow(s, 6.15, [
+    {"type": "text", "t": "Built on", "size": 13, "color": SLATE},
+    {"type": "img", "name": "uniswap-logo", "h": 0.32},
+    {"type": "text", "t": "·", "size": 16, "color": SLATE},
+    {"type": "text", "t": "Powered by", "size": 13, "color": SLATE},
+    {"type": "img", "name": "reactive-logo", "h": 0.28},
+], gap=0.2)
+center(s, 1.0, 6.95, 11.33, 0.35,
+       [[{"t": "292 tests passing   ·   Fuzz tested   ·   Invariant tested",
+          "size": 12, "color": SLATE}]])
 notes(s,
-"RangeGuard proves that impermanent loss coverage doesn't require a separate protocol, an oracle, "
-"or off-chain infrastructure. It's native — built directly into the pool, funded by the same "
-"swap activity it protects against, capped to keep the buffer solvent, and settled automatically "
-"on withdrawal. The primary beneficiaries are passive and semi-passive LPs — they get downside "
-"protection without complex hedging strategies. But the impact extends to protocols and DAOs "
-"that need sticky liquidity without relying on token emissions, and to the broader Uniswap "
-"ecosystem through deeper pools, tighter spreads, and better execution. The coverage statement "
-"is auditable by anyone, recomputable from on-chain events, and expressed in a standard "
-"financial day-count convention. Earned over time. Funded by swaps. Settled on-chain. The live "
-"dashboard is at range-guard.vercel.app. Full source and 292 passing tests on GitHub. Thank you.")
+"RangeGuard makes providing liquidity safer, more transparent, and more attractive — helping "
+"Uniswap pools retain and grow their LP base. The primary beneficiaries are passive LPs who get "
+"downside protection without complex hedging. But the impact extends to protocols that need "
+"sticky liquidity without emissions, and to the broader ecosystem through deeper pools and "
+"better execution. Earned over time. Funded by swaps. Settled on-chain. Live dashboard at "
+"range-guard.vercel.app. Full source and 292 passing tests on GitHub. Thank you.")
 
 # ---------------------------------------------------------------- save
-out = "/Users/gkocsis/atrium_uhi/RangeGuard/docs/RangeGuard-Demo-Deck.pptx"
+out = os.path.join(HERE, "RangeGuard-Demo-Deck.pptx")
 prs.save(out)
 print("saved", out, "slides:", len(prs.slides._sldIdLst))

@@ -2,11 +2,64 @@
 
 **Date:** 2026-06-08
 **Branch:** `feat/slides`
-**Deliverable:** `docs/RangeGuard-Demo-Deck.pptx` (+ reproducible builder `docs/build_deck.py`)
+**Deliverable:** `docs/RangeGuard-Demo-Deck.pptx` (+ reproducible builders `docs/build_deck.py`,
+`docs/build_assets.py`) + logo assets in `docs/assets/`
 
 ---
 
-## What was built
+## Rebuild (v2) — logo + 6-slide deck
+
+The deck was rebuilt from the original 9-slide version (recorded further below) down to a tighter
+**6-slide** narrative, and a project **logo** was designed. Two phases:
+
+### Phase 1 — RangeGuard logo (`docs/assets/`)
+A custom mark: a classic shield (gradient stroke `#FF007A → #9B59B6`, transparent fill) wrapping
+three green (`#00d395`) vertical bars — a "range" bar-chart guarded by a shield. Bars: left 60% /
+center 85% / right 45% height, 12%-width, 8% gaps, centered + bottom-aligned. Eight SVG files:
+- `logo-icon.svg` (64×64) · `favicon.svg` (32×32, 2px stroke, simplified)
+- `logo-standalone.svg` (300×64, icon + "RangeGuard" white) · `logo-standalone-light.svg` (dark text)
+- `logo-full.svg` (360×140, icon + name + tagline, white) · `logo-full-light.svg` (dark text `#0f1117`,
+  tagline `#4a5568`)
+- The light variants were added on request for light-background placements.
+
+Partner logos fetched from official sources and saved to `docs/assets/`:
+- `uniswap-logo.svg` — the pink unicorn mark (`#F50DB4`), from cryptologos.cc.
+- `reactive-logo.svg` / `reactive-logo-dark.svg` — the Reactive wordmark, from
+  `dev.reactive.network/img/rn-docs-logo-{white,black}.svg`. (The asset is a `reactive | Dev`
+  lockup; for the embed PNG the `| Dev` suffix is cropped off — see below.)
+
+### Phase 2 — 6-slide deck
+Structural changes from v1: removed the two IL-explanation slides (judges know IL), the demo
+transition, and the coverage-report transition; added a **Title** slide. New order:
+1. **Title** — `logo-full` centered + "Gary Kocsis / Uniswap Hook Incubator" + "Built on
+   [Uniswap] · Powered by [Reactive]" partner row.
+2. **The Solution** — headline + 5 two-line bullets + tagline.
+3. **Economic Flywheel** — two-row flow **loop** (NOT circular): row 1 L→R, down arrow, row 2 R→L,
+   up arrow back to start; the two buffer boxes accent-bordered.
+4. **Five Pillars** — Pillar 4 (LP Transparency ★) highlighted.
+5. **Code Walkthrough** — 6-box lifecycle (all accent-bordered, same color) + two amber callouts.
+6. **Closing** — `logo-standalone` top center + ✓ bullets + beneficiary table + partner row +
+   dashboard/GitHub links + 292-tests footer.
+Logo placement: `logo-icon` top-left (24px, beside the section label) on slides 2–5; full speaker
+notes (incl. verbal transitions + IDE narration) carried on every slide, per the v2 prompt.
+
+### Rasterization note (important for reproducibility)
+python-pptx **cannot embed SVG**, and the only local renderer (macOS `qlmanage`) composites SVGs
+on an opaque **white** background. Since every logo sits on the flat `#0f1117` slide background,
+`docs/build_assets.py` re-renders each SVG with a matching navy background rect (seamless on-slide)
+at 2000px, auto-crops `qlmanage`'s white padding to a tight content box, and writes PNGs to
+`docs/assets/png/`. `build_deck.py` embeds those PNGs sized by height (aspect from the PNG). The
+Reactive PNG is right-cropped (`keep_left=0.685`) to drop the `| Dev` suffix.
+**Build order:** `python3 docs/build_assets.py` → `python3 docs/build_deck.py`.
+
+### Verification
+Structure validated (6 slides, 13.333×7.5, logos embedded on the right slides, notes on all).
+Rendered to slide images via LibreOffice headless for visual QA (LibreOffice installed this
+session; macOS has no Quick Look generator for `.pptx`).
+
+---
+
+## Original v1 record — 9-slide deck (superseded by the rebuild above)
 
 A complete 9-slide presentation as a `.pptx` file that imports directly into Google Slides.
 
