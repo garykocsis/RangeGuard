@@ -220,3 +220,38 @@ missing" step was a no-op (confirmed, not recreated).
 - `context.md` — next target → NONE / PROJECT COMPLETE.
 - `docs/session-17-readme.md` — this file.
 - `LICENSE` — confirmed already present (MIT, Gary Kocsis, 2026); not recreated.
+
+---
+
+## Post-write cleanup (same session, folded into the finalize commit)
+
+Two small follow-ups requested after the README was approved, committed together with the README
+session:
+
+1. **Roadmap Phase 2 additions (README.md):** two new bullets after the existing items — a
+   **Code style cleanup** item (remaining `forge lint` notes: SCREAMING_SNAKE_CASE immutables,
+   mixedCase vars/functions in test harnesses, the `asm-keccak256` note on `_positionKey()` — all
+   correctness-neutral, deferred to mainnet hardening) and a **`DemoLPRouter.sol` hardening** item
+   (add ERC20 transfer return-value checks; the demo router's transfers are currently unchecked —
+   fine for the MockUSDC testnet demo, not production).
+
+2. **Unused-import removal (18 files):** removed exactly the imports flagged by `forge lint`
+   (`unused-import`), nothing else — no renames, no logic changes. Authoritative list taken from
+   `forge lint` itself, then verified per file whether the second symbol in multi-symbol imports was
+   still used:
+   - `{BalanceDelta, toBalanceDelta}` → `{toBalanceDelta}` (toBalanceDelta still used) in 11 files:
+     AfterAddLiquidityFuzz, AfterRemoveLiquidityFuzz, RangeEventGuardFuzz, CoverageAccrualLifecycle,
+     AfterSwapHandler, SettlementHandler, CheckpointAndEmitBackInRange, AfterAddLiquidityHandler,
+     LastRangeEventInRange, RangeEventHandler, ReactiveTopicWiring.
+   - `{PoolId, PoolIdLibrary}` → `{PoolIdLibrary}` (PoolIdLibrary still used) in 3 files:
+     RangeGuardDemo.s.sol, StagePoolConfigFuzz, BeforeSwapFuzz.
+   - Whole import line removed (single unused symbol) in 4 files: LiveWithdraw.s.sol (`IPoolManager`),
+     PoolSetup.t.sol (`IPoolManager`), RemoveLiquidity.t.sol (`BalanceDelta`),
+     CoverageAccountingInvariant.t.sol (`PoolId`).
+
+   *Note:* the user's file list had a line-merge typo joining `AfterAddLiquidityHandler.sol` and
+   `AfterSwapHandler.sol`; both were handled. `forge lint` was the source of truth, so the exact set
+   matched regardless.
+
+**Verification:** `forge build` clean · `forge test` → **292 passed, 0 failed, 0 skipped** ·
+`forge lint` → **0** `unused-import` notes remaining (was 18).

@@ -7,7 +7,6 @@ pragma solidity ^0.8.26;
 // Phase-2 commit fires via the live callback and that a reverting commit creates no pool.
 // Naming per testing-strategy.md: test_Integration_WhenScenario_ExpectedOutcome().
 
-import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {Currency} from "v4-core/types/Currency.sol";

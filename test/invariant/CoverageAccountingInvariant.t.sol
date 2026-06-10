@@ -7,8 +7,6 @@ pragma solidity ^0.8.26;
 // validates from invariant-mapping.md. Inherits BaseRangeGuardTest for canonical
 // deployment; randomized accrual is driven by AccrueHandler over the shared harness.
 
-import {PoolId} from "v4-core/types/PoolId.sol";
-
 import {BaseRangeGuardTest} from "../shared/BaseRangeGuardTest.t.sol";
 import {RangeGuardHook} from "../../src/RangeGuardHook.sol";
 import {RangeGuardHookHarness} from "../harness/RangeGuardHookHarness.sol";

@@ -396,6 +396,15 @@ Both pitfalls were diagnosed from on-chain state and are now documented as manda
 - [ ] Volatility-responsive dynamic fee
 - [ ] Separate vault contract for buffer custody
 - [ ] Multisig admin
+- [ ] **Code style cleanup:** Resolve `forge lint` notes —
+      SCREAMING_SNAKE_CASE immutables, mixedCase variables/functions
+      in test harnesses, unused imports, and the `asm-keccak256`
+      note on `_positionKey()` (minor gas optimization, correctness
+      unaffected). Zero impact on security; deferred to mainnet
+      hardening pass.
+- [ ] **`DemoLPRouter.sol` hardening:** Add ERC20 transfer return-value
+      checks (currently unchecked — acceptable for MockUSDC testnet
+      demo, not production-ready).
 
 ### Phase 3 — Production
 

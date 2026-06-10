@@ -9,7 +9,7 @@ import {Currency} from "v4-core/types/Currency.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {LPFeeLibrary} from "v4-core/libraries/LPFeeLibrary.sol";
 import {ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
-import {BalanceDelta, toBalanceDelta} from "v4-core/types/BalanceDelta.sol";
+import {toBalanceDelta} from "v4-core/types/BalanceDelta.sol";
 
 import {RangeGuardHook} from "../../../src/RangeGuardHook.sol";
 import {RangeGuardHookHarness} from "../../harness/RangeGuardHookHarness.sol";
