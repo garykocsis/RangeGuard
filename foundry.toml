@@ -37,3 +37,11 @@ depth = 500
 seed = "0x1"
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+[lint]
+exclude_lints = [
+    "mixed-case-variable",
+    "mixed-case-function",
+    "screaming-snake-case-immutable",
+    "asm-keccak256",
+]
