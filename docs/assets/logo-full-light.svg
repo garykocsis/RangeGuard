@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 140" width="360" height="140" role="img" aria-label="RangeGuard — Protect your liquidity. Guard your range.">
+  <defs>
+    <linearGradient id="rgShieldFullLight" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#FF007A"/>
+      <stop offset="100%" stop-color="#9B59B6"/>
+    </linearGradient>
+  </defs>
+  <!-- Shield 64px centered (canvas width 360 -> center x=180 -> translate x=148) -->
+  <g transform="translate(148,2)">
+    <path d="M 14 8 L 50 8 Q 54 8 54 12 L 54 30 C 54 44 44 52 32 58 C 20 52 10 44 10 30 L 10 12 Q 10 8 14 8 Z"
+          fill="none" stroke="url(#rgShieldFullLight)" stroke-width="3" stroke-linejoin="round"/>
+    <g fill="#00d395">
+      <rect x="20.5" y="23" width="5.3" height="24" rx="1"/>
+      <rect x="29.3" y="13" width="5.3" height="34" rx="1"/>
+      <rect x="38.1" y="29" width="5.3" height="18" rx="1"/>
+    </g>
+  </g>
+  <!-- Name -->
+  <text x="180" y="98" text-anchor="middle" font-family="Calibri, 'Segoe UI', sans-serif"
+        font-weight="700" font-size="36" fill="#0f1117">RangeGuard</text>
+  <!-- Tagline -->
+  <text x="180" y="124" text-anchor="middle" font-family="Calibri, 'Segoe UI', sans-serif"
+        font-weight="400" font-size="16" fill="#4a5568">Protect your liquidity. Guard your range.</text>
+</svg>

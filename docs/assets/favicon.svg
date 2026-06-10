@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="RangeGuard favicon">
+  <defs>
+    <linearGradient id="rgShieldFav" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#FF007A"/>
+      <stop offset="100%" stop-color="#9B59B6"/>
+    </linearGradient>
+  </defs>
+  <!-- Simplified shield for 32px; stroke-width 2 -->
+  <path d="M 7 4 L 25 4 Q 27 4 27 6 L 27 15 C 27 22 22 26 16 29 C 10 26 5 22 5 15 L 5 6 Q 5 4 7 4 Z"
+        fill="none" stroke="url(#rgShieldFav)" stroke-width="2" stroke-linejoin="round"/>
+  <g fill="#00d395">
+    <rect x="10.25" y="11.5" width="2.6" height="12" rx="0.6"/>
+    <rect x="14.65" y="6.5" width="2.6" height="17" rx="0.6"/>
+    <rect x="19.05" y="14.5" width="2.6" height="9" rx="0.6"/>
+  </g>
+</svg>

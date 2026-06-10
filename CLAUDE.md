@@ -79,7 +79,9 @@ Completed (Phase 3B — continued, Session 11; HOOK SUPERSEDED by the Session-12
 
 Current implementation target:
 
-- Recorded 5-minute demo (spec §15), then the full README + demo video write-up
+- Coverage + gas snapshot, then the full README write-up
+  (presentation deck ✅ + demo recorded & uploaded ✅ — Session 15;
+  demo video https://www.youtube.com/watch?v=82_9mEh_POM)
 
 Upcoming implementation order:
 
@@ -87,7 +89,9 @@ Upcoming implementation order:
 2. ReactVM (reactive) deployment ✅ (Session 12 — Reactive Lasna 0xC0e6…B70b, live + wired + verified)
 3. Demo script (RangeGuardDemo.s.sol) ✅ (Session 13)
 4. Frontend dashboard ✅ (Session 14 — frontend/, live coverage report; https://range-guard.vercel.app)
-5. Recorded 5-minute demo + full README ← current
+5. Presentation deck ✅ (Session 15 — docs/RangeGuard-Demo-Deck.pptx, 6-slide Google-Slides .pptx + logo)
+6. Recorded 5-minute demo ✅ (Session 15 — uploaded https://www.youtube.com/watch?v=82_9mEh_POM)
+7. Coverage + gas snapshot + full README ← current
 
 ---
 
@@ -361,7 +365,34 @@ At the start of every session, Claude must:
 
 # Current Session State
 
-Last completed (Session 14): Frontend dashboard — the LP coverage report (spec §4 Pillar 4).
+Last completed (Session 15): Presentation deck + logo, and the recorded demo (uploaded to YouTube).
+The slides are COMPLETE and the 5-minute demo is RECORDED & UPLOADED:
+https://www.youtube.com/watch?v=82_9mEh_POM (~3m 53s).
+
+DECK — `docs/RangeGuard-Demo-Deck.pptx`: a 6-slide `.pptx` (python-pptx 1.0.2) that imports directly
+into Google Slides. 16:9 (13.33"×7.5"), Calibri, dark-navy design system (bg #0f1117, white #ffffff,
+accent #00d395, slate #94a3b8, amber #f59e0b, danger #ef4444, card #1e2433). Slides: 1 Title ·
+2 The Solution · 3 Economic Flywheel · 4 Five Pillars · 5 Code Walkthrough · 6 Closing. FULL speaker
+notes on every slide. REBUILT from the prior 9-slide version: removed the two IL-explanation slides
+(judges know IL) + the two transition slides (demo / coverage-report); added a Title slide.
+
+LOGO — `docs/assets/`: shield (gradient stroke #FF007A→#9B59B6, transparent fill) wrapping three
+green #00d395 bar-chart bars. Variants: logo-icon.svg (64²) · favicon.svg (32², 2px) ·
+logo-standalone.svg (+ -light) · logo-full.svg (+ -light). Partner logos from official sources:
+uniswap-logo.svg (pink unicorn) · reactive-logo.svg (+ -dark wordmark). Usage on slides: shield icon
+top-left on content slides; Title + Closing wordmark lockups are NATIVE Calibri text + the shield
+icon (crisper than rasterizing, and dodges a faint downscaled-text raster seam); partner logos on
+Title + Closing under "Built on" / "Powered by".
+
+RASTERIZE PIPELINE — python-pptx can't embed SVG; `docs/build_assets.py` renders each needed SVG→PNG
+on a navy bg (qlmanage composites on white, so we inject a #0f1117 rect, key it to transparent, crop)
+→ `docs/build_deck.py` embeds the PNGs. Build order: build_assets.py then build_deck.py. Verified by
+rendering the .pptx to slide images via LibreOffice headless (LibreOffice + poppler installed this
+session for visual QA). 292 tests cited; demo figures use the REAL fork run (entry 228.38, total
+coverage 12.51, payout 2.23 USDC / IL_CAP), matching the frontend ?demo view.
+-> docs/session-15-slides.md
+
+Previously completed (Session 14): Frontend dashboard — the LP coverage report (spec §4 Pillar 4).
 React 18 + Vite + Tailwind + viem SPA in `frontend/`, NO backend — reads public Sepolia RPC only.
 - TWO MODES (Option C): LIVE (default, or `?positionKey=0x…`) renders the real on-chain coverage
   report for any position; `?demo=true` renders a hardcoded fork narrative from
@@ -431,7 +462,8 @@ docs/reactive-lib-omni-audit.md. Session record: docs/session-12-reactive-deploy
 NOT done: Phase-7 end-to-end (LP deposit → swap → PositionTracked → Checkpointed) — needs the demo
 script (RangeGuardDemo.s.sol). No live LP-deposit/swap tooling exists yet for the Sepolia pool.
 
-Current target: Recorded 5-minute demo (spec §15), then the full README + demo video write-up.
+Current target: Coverage + gas snapshot, then the full README write-up. (Slides ✅ + demo recorded &
+uploaded ✅ in Session 15 — https://www.youtube.com/watch?v=82_9mEh_POM.)
 Carry-ins: payout recipient = v4 sender (owner=sender MVP). The Callback Proxy is PER NETWORK under
 Omni — for any future host chain confirm it at dev.reactive.network/origins-and-destinations before
 deploying the hook (it is NOT the legacy 0x…fffFfF).

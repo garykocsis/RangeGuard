@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 64" width="300" height="64" role="img" aria-label="RangeGuard">
+  <defs>
+    <linearGradient id="rgShieldSALight" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#FF007A"/>
+      <stop offset="100%" stop-color="#9B59B6"/>
+    </linearGradient>
+  </defs>
+  <!-- Icon (48px) — 64-space shield scaled 0.75 -->
+  <g transform="translate(6,8) scale(0.75)">
+    <path d="M 14 8 L 50 8 Q 54 8 54 12 L 54 30 C 54 44 44 52 32 58 C 20 52 10 44 10 30 L 10 12 Q 10 8 14 8 Z"
+          fill="none" stroke="url(#rgShieldSALight)" stroke-width="4" stroke-linejoin="round"/>
+    <g fill="#00d395">
+      <rect x="20.5" y="23" width="5.3" height="24" rx="1"/>
+      <rect x="29.3" y="13" width="5.3" height="34" rx="1"/>
+      <rect x="38.1" y="29" width="5.3" height="18" rx="1"/>
+    </g>
+  </g>
+  <!-- Wordmark -->
+  <text x="62" y="32" dominant-baseline="central" font-family="Calibri, 'Segoe UI', sans-serif"
+        font-weight="700" font-size="32" fill="#0f1117">RangeGuard</text>
+</svg>
