@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400" role="img" aria-label="RangeGuard square logo">
+  <defs>
+    <linearGradient id="rgShield" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#FF007A"/>
+      <stop offset="100%" stop-color="#9B59B6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Dark-navy background -->
+  <rect x="0" y="0" width="400" height="400" fill="#0f1117"/>
+
+  <!-- Shield icon (logo-icon.svg geometry), 64-unit box scaled 2.5x => 160px, centered horizontally, upper-center -->
+  <g transform="translate(120,68) scale(2.5)">
+    <path d="M 14 8 L 50 8 Q 54 8 54 12 L 54 30 C 54 44 44 52 32 58 C 20 52 10 44 10 30 L 10 12 Q 10 8 14 8 Z"
+          fill="none" stroke="url(#rgShield)" stroke-width="3" stroke-linejoin="round"/>
+    <g fill="#00d395">
+      <rect x="20.5" y="23" width="5.3" height="24" rx="1"/>
+      <rect x="29.3" y="13" width="5.3" height="34" rx="1"/>
+      <rect x="38.1" y="29" width="5.3" height="18" rx="1"/>
+    </g>
+  </g>
+
+  <!-- Name: centered below the shield -->
+  <text x="200" y="272" text-anchor="middle"
+        font-family="Calibri, 'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="48" font-weight="bold" fill="#ffffff">RangeGuard</text>
+
+  <!-- Tagline: centered below the name -->
+  <text x="200" y="308" text-anchor="middle"
+        font-family="Calibri, 'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="18" fill="#94a3b8">Protect your liquidity. Guard your range.</text>
+</svg>
