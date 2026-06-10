@@ -1,5 +1,5 @@
 RangeGuard Project Status
-Last Updated: 2026-06-09 (Session 16 — coverage + gas snapshot)
+Last Updated: 2026-06-10 (Session 17 — full README; PROJECT COMPLETE)
 How to use this file
 
 The Roadmap is the single source of truth for progress — one checkbox per item.
@@ -14,8 +14,25 @@ invariant; correctness before gas.
 
 Now
 
-Active target: Full README write-up. All protocol code, deployment, demo tooling, the frontend
-dashboard, the presentation deck, the recorded demo, AND the coverage + gas snapshot are complete.
+PROJECT COMPLETE. The full README write-up (Session 17) was the last open roadmap item; every
+phase is now shipped. No open implementation work remains.
+
+Just completed (Session 17): Full README write-up — replaced the placeholder README.md with a
+comprehensive 13-section document (header → Overview → The Problem → Five Pillars → Architecture
+with two Mermaid diagrams → Technical Deep Dive → Live Deployment → Running Locally → Test Suite →
+Reactive Network Integration → Roadmap → Documentation Index → License). All addresses are clickable
+Etherscan/Lasna-explorer links; header carries both the Sepolia hook (0xFead…a7C0) and the Lasna-Omni
+reactive contract (0x5eb9…Fee1). Key content decisions (user-confirmed): rigorous IL example
+($4,000 notional, ETH $2,000→$1,000, IL = $172 = 5.72% of the $3,000 HODL value, net −$152 — every
+cell reconciles); "coverage" never "insurance"; "Reactive Network (Lasna Omni fork)" naming with the
+Session-12→13 migration story in Section 10; the leading `address` RVM-ID placeholder KEPT in shown
+signatures (matches deployed bytecode — verified in src/) and framed as a legacy carry-forward; the
+Omni-fork-v2 upgrade (onlyServiceProvider → onlyCallbackSender) added as the first Phase-2 roadmap
+item; live PartialPayout/COVERAGE_CAP vs simulated IL_CAP demo shown honestly; spec §11 view fns
+only under Roadmap. Branch: docs/readme. -> docs/session-17-readme.md
+
+Previously: All protocol code, deployment, demo tooling, the frontend dashboard, the presentation
+deck, the recorded demo, AND the coverage + gas snapshot were complete (Sessions 1–16).
 
 Just completed (Session 16): Coverage report + gas snapshot baseline + CI gating + .env.example.
 - COVERAGE: forge coverage → docs/coverage-summary.md. Total 98.45% lines / 98.51% statements /
@@ -305,7 +322,9 @@ Reactive contract ✅ (complete — see Completed section / session-10 doc)
 - [x] Coverage + gas snapshot (Session 16: `.gas-snapshot` committed baseline + CI gas-regression
       gate + coverage job; docs/coverage-summary.md — 98.45% lines (core hook + reactive at 100%);
       afterSwap 46,414 avg gas; README badges; .env.example — see docs/session-16-coverage-gas.md)
-- [ ] Full README write-up ← NOW
+- [x] Full README write-up (Session 17: comprehensive 13-section README.md — header with clickable
+      hook + reactive addresses, two Mermaid diagrams, rigorous IL example, day-count + gas deep dive,
+      live deployment tables, Omni-fork migration story. PROJECT COMPLETE — see docs/session-17-readme.md)
 
 Phase 4: Protocol Invariants (cross-cutting)
 

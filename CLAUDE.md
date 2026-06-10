@@ -79,11 +79,10 @@ Completed (Phase 3B — continued, Session 11; HOOK SUPERSEDED by the Session-12
 
 Current implementation target:
 
-- Coverage + gas snapshot, then the full README write-up
-  (presentation deck ✅ + demo recorded & uploaded ✅ — Session 15;
-  demo video https://www.youtube.com/watch?v=82_9mEh_POM)
+- PROJECT COMPLETE — all roadmap items shipped. The full README write-up was the last item
+  (Session 17 ✅). No open implementation work remains.
 
-Upcoming implementation order:
+Roadmap (all complete):
 
 1. Sepolia hook deployment ✅ (Session 11; REDEPLOYED for Lasna in Session 12 — new hook 0xFead…a7C0)
 2. ReactVM (reactive) deployment ✅ (Session 12 — Reactive Lasna 0xC0e6…B70b, live + wired + verified)
@@ -91,7 +90,8 @@ Upcoming implementation order:
 4. Frontend dashboard ✅ (Session 14 — frontend/, live coverage report; https://range-guard.vercel.app)
 5. Presentation deck ✅ (Session 15 — docs/RangeGuard-Demo-Deck.pptx, 6-slide Google-Slides .pptx + logo)
 6. Recorded 5-minute demo ✅ (Session 15 — uploaded https://www.youtube.com/watch?v=82_9mEh_POM)
-7. Coverage + gas snapshot + full README ← current
+7. Coverage + gas snapshot ✅ (Session 16)
+8. Full README write-up ✅ (Session 17 — comprehensive README.md; project complete)
 
 ---
 
@@ -365,8 +365,43 @@ At the start of every session, Claude must:
 
 # Current Session State
 
-Last completed (Session 16): Coverage report + committed gas-snapshot baseline + CI gating +
-`.env.example`. The ONLY remaining roadmap item is the full README write-up.
+PROJECT COMPLETE (Session 17): The full README write-up — the last open roadmap item — is done.
+Every roadmap item across all phases is now shipped. `README.md` replaces the placeholder with a
+comprehensive, audience-ready document (judges / employers / developers).
+
+README (Session 17) — 13 sections: header (logo + 5 badges + live dashboard/demo links + clickable
+Sepolia hook `0xFead…a7C0` AND Lasna-Omni reactive `0x5eb9…Fee1`) → Overview → The Problem → The
+Solution (Five Pillars) → Architecture (TWO Mermaid diagrams: two-chain + LP lifecycle, GitHub-native)
+→ Technical Deep Dive (6.1 hook mechanics + _accrue snippet · 6.2 reactive · 6.3 day-count · 6.4 gas)
+→ Live Deployment (all addresses clickable) → Running Locally → Test Suite → Reactive Network
+Integration → Roadmap → Documentation Index → License. Content decisions (all confirmed by the user):
+- IL EXAMPLE (rigorous, reconciles cell-by-cell): 1 ETH + 2,000 USDC @ $2,000 ($4,000 notional),
+  ETH→$1,000. HODL exit $3,000; LP exit $2,828 (1.414 ETH + 1,414 USDC); IL = $172 (= 5.72% of the
+  $3,000 HODL value, NOT 5.72%×$4,000=$229 — that conflates the % base); ~$20 fees; net −$152. 5.72%
+  = 2√r/(1+r)−1 at r=0.5. Use THESE numbers everywhere the IL example appears.
+- "coverage" NEVER "insurance" (regulatory connotation) — enforced repo-wide in the README.
+- LASNA NAMING: always "Reactive Network (Lasna Omni fork)". Migration story told in Section 10
+  (Session 12 legacy Lasna / reactive-lib v0.2.0 → Session 13 discovered Omni upgrade → migrate to
+  reactive-lib-omni + 2 fixes → redeploy). "ReactVM" used ONLY for the legacy sandbox model.
+- LEADING address PLACEHOLDER: KEPT in the shown signatures — it MATCHES the deployed bytecode
+  (verified: src/RangeGuardHook.sol checkpointCallback/checkpointAndEmitOutOfRange/…BackInRange all
+  take `address /*RVM ID*/`, and RangeGuardReactive encodes address(0) first). The user initially
+  asked to remove it (believing Omni dropped it); on-chain evidence showed it is RETAINED, so it
+  stays, framed as a "legacy carry-forward" to be removed in the Omni-fork-v2 upgrade (now the FIRST
+  Phase-2 roadmap item, with onlyServiceProvider → onlyCallbackSender(rangeGuardReactiveOrigin)).
+- LIVE vs DEMO settlement shown honestly: live = PartialPayout/COVERAGE_CAP (entry 228.69 USDC);
+  IL_CAP/ClaimSettled (12.51 earned → 2.23 paid) is the labeled ?demo=true fork narrative.
+- Spec §11 view fns appear ONLY under Roadmap Phase 2 (not implied to exist on the deployed hook).
+- Gas table 6.4: afterSwap 46,414 (O(1), every swap) / checkpoint 56,455 / afterRemoveLiquidity
+  61,922 / afterAddLiquidity 163,872 / beforeInitialize 212,967.
+- VERIFIED at write time: `make gas-check` exists (Makefile L118), `docs/assets/logo-icon.svg`
+  exists — so the README's references are correct as-is.
+Branch: docs/readme. -> docs/session-17-readme.md
+
+---
+
+Previously completed (Session 16): Coverage report + committed gas-snapshot baseline + CI gating +
+`.env.example`.
 
 COVERAGE — `docs/coverage-summary.md` (and a Production Contract Coverage section): `forge coverage
 --report summary --no-match-coverage "(test|script)/"` → total **98.45% lines** / 98.51% statements
