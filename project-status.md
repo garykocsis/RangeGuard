@@ -14,25 +14,27 @@ invariant; correctness before gas.
 
 Now
 
-Active target: Recorded 5-minute demo (spec §15). All protocol code, deployment, demo tooling, the
-frontend dashboard, and the presentation deck are complete. Remaining work is the recording itself +
-the full README/demo video write-up afterward.
+Active target: Coverage + gas snapshot (forge coverage / forge snapshot), then the full README
+write-up. All protocol code, deployment, demo tooling, the frontend dashboard, the presentation
+deck, AND the recorded demo are complete.
 
-In progress (Session 15): Google Slides demo deck + RangeGuard logo. The deck was REBUILT from the
-original 9-slide version to a tighter 6-slide narrative (Title / The Solution / Economic Flywheel /
-Five Pillars / Code Walkthrough / Closing), and a custom logo was designed.
-- LOGO (docs/assets/): shield (gradient stroke #FF007A→#9B59B6) wrapping three green #00d395
-  bar-chart bars. SVGs: logo-icon, favicon, logo-standalone(+ -light), logo-full(+ -light). Partner
-  logos fetched from official sources: uniswap-logo.svg (pink unicorn), reactive-logo.svg (wordmark,
-  + -dark variant).
+Just completed (Session 15): Presentation deck + RangeGuard logo, and the recorded 5-minute demo
+(uploaded to YouTube). The deck was REBUILT from the original 9-slide version to a tighter 6-slide
+narrative (Title / The Solution / Economic Flywheel / Five Pillars / Code Walkthrough / Closing),
+a custom logo was designed, and the demo was recorded and published.
+- DEMO VIDEO: https://www.youtube.com/watch?v=82_9mEh_POM (~3m 53s; linked in README.md).
 - DECK (docs/RangeGuard-Demo-Deck.pptx): 16:9, dark-navy design system, Calibri, full speaker notes
-  on every slide (incl. verbal transitions + IDE narration), embedded logos (logo-full on Title,
-  logo-icon top-left on content slides, logo-standalone + partner logos on Closing). 292 tests cited.
-- RASTERIZE PIPELINE: python-pptx can't embed SVG; docs/build_assets.py renders each SVG→PNG on a
-  navy bg (qlmanage composites on white, so we add a #0f1117 rect + crop) → build_deck.py embeds the
-  PNGs. Build order: build_assets.py then build_deck.py.
-- Session is ONGOING — closing docs deferred per instruction; the Phase-1/2 prompt will be appended
-  to the session-15 closing doc when the close-out instruction is given.
+  on every slide (incl. verbal transitions + IDE narration). Title + Closing wordmark lockups are
+  native Calibri text + the shield icon (crisper); shield icon top-left on content slides; Uniswap +
+  Reactive partner logos on Title + Closing. 292 tests cited.
+- LOGO (docs/assets/): shield (gradient stroke #FF007A→#9B59B6) wrapping three green #00d395
+  bar-chart bars. SVGs: logo-icon.svg, favicon.svg, logo-standalone.svg(+ -light),
+  logo-full.svg(+ -light). Partner logos from official sources: uniswap-logo.svg (pink unicorn),
+  reactive-logo.svg(+ -dark wordmark).
+- RASTERIZE PIPELINE: python-pptx can't embed SVG; docs/build_assets.py renders each needed SVG→PNG
+  on a navy bg (qlmanage composites on white, so we inject a #0f1117 rect, key to transparent, crop)
+  → build_deck.py embeds the PNGs. Build order: build_assets.py then build_deck.py. Verified by
+  rendering to slide images via LibreOffice headless.
 -> docs/session-15-slides.md
 
 Just completed (Session 14): Frontend dashboard — coverage report (frontend/, React 18 + Vite +
@@ -266,10 +268,13 @@ Reactive contract ✅ (complete — see Completed section / session-10 doc)
 - [x] Presentation deck + logo (Session 15): docs/RangeGuard-Demo-Deck.pptx — REBUILT to a 6-slide
       Google-Slides-ready .pptx (Title / Solution / Flywheel / Five Pillars / Code Walkthrough /
       Closing; 16:9, dark-navy design system, Calibri, full speaker notes, embedded logos). Custom
-      RangeGuard logo (shield + bar-chart) in docs/assets/ (icon/favicon/standalone/full + light
-      variants) plus Uniswap + Reactive partner logos. Built via docs/build_assets.py (SVG→PNG) +
+      RangeGuard logo (shield + bar-chart) in docs/assets/ — logo-icon.svg, favicon.svg,
+      logo-standalone.svg (+ -light), logo-full.svg (+ -light), plus Uniswap (uniswap-logo.svg) +
+      Reactive (reactive-logo.svg, + -dark) partner logos. Built via docs/build_assets.py (SVG→PNG) +
       docs/build_deck.py — see docs/session-15-slides.md
-- [ ] Recorded 5-minute demo (spec §15) + full README / demo video write-up ← NOW
+- [x] Recorded 5-minute demo (spec §15) (Session 15): recorded + uploaded to YouTube
+      https://www.youtube.com/watch?v=82_9mEh_POM (~3m 53s); linked in README.md
+- [ ] Coverage + gas snapshot (forge coverage / forge snapshot) + full README write-up ← NOW
 
 Phase 4: Protocol Invariants (cross-cutting)
 

@@ -60,7 +60,15 @@ via PoolManager extsload. Deployed on Vercel (auto from main): https://range-gua
 
 Next implementation target:
 
-- Recorded 5-minute demo (spec §15), then the full README + demo video write-up
+- Coverage + gas snapshot (forge coverage / forge snapshot), then the full README write-up
+
+Completed (Session 15): presentation deck + RangeGuard logo, and the recorded 5-minute demo (uploaded
+to YouTube). Deck docs/RangeGuard-Demo-Deck.pptx — 6-slide Google-Slides .pptx (Title / The Solution /
+Economic Flywheel / Five Pillars / Code Walkthrough / Closing; 16:9, dark-navy design system, Calibri,
+full speaker notes). Logo in docs/assets/ (shield + bar-chart: logo-icon/favicon/standalone/full +
+light variants) plus Uniswap + Reactive partner logos; built via docs/build_assets.py +
+docs/build_deck.py. Demo video: https://www.youtube.com/watch?v=82_9mEh_POM (~3m 53s; linked in
+README.md). -> docs/session-15-slides.md
 
 Completed (Session 13): demo tooling — RangeGuardDemo.s.sol (Option A, fork+vm.warp, spec §14),
 LiveEndToEnd.s.sol / LiveWithdraw.s.sol (Option B live broadcast), DemoLPRouter.sol (live LP whose
@@ -74,9 +82,9 @@ not contracts). -> docs/session-13-demo-script.md, docs/reactive-evidence.md
 
 Planned next steps:
 
-- Record the 5-minute demo (spec §15): terminal segment (RangeGuardDemo.s.sol) + coverage-report
-  segment (the ?demo=true dashboard view) + reactive evidence. Then write the full README and link
-  the demo video.
+- Coverage + gas snapshot: run forge coverage and forge snapshot, record the numbers. Then write the
+  full README (the demo is recorded + linked — https://www.youtube.com/watch?v=82_9mEh_POM; slides in
+  docs/RangeGuard-Demo-Deck.pptx).
 
 Recent architecture update:
 

@@ -6,6 +6,6 @@ A Uniswap v4 hook providing native on-chain impermanent loss coverage for liquid
 
 **Live dashboard:** https://range-guard.vercel.app
 
-**Demo video:** coming soon
+**Demo video:** https://www.youtube.com/watch?v=82_9mEh_POM
 
 **Documentation and full README coming soon.**
