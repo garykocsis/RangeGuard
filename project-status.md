@@ -24,15 +24,20 @@ Just completed (Session 16): Coverage report + gas snapshot baseline + CI gating
   from intentional non-shippable items: MockUSDC.sol (0%, testnet-only mock) and the vendored
   AbstractPausableReactive ReactVM-detection branches (resolve only on live Lasna, unreachable in
   the Foundry EVM). coverage/ + lcov.info gitignored.
-- GAS: forge snapshot → committed .gas-snapshot baseline (277 entries). Top-5 production hook
-  functions by avg gas: beforeInitialize 212,967 (one-time/pool), afterAddLiquidity 163,872
-  (one-time/position), afterRemoveLiquidity 61,922, checkpoint 56,455, afterSwap 46,414 (constant
-  per-swap, O(1) — no LP iteration). Source: forge test --gas-report (per-function; .gas-snapshot
-  is per-test).
-- SEPOLIA FORK EXCLUSION: the 14 test/integration/sepolia/* tests are excluded from the baseline +
-  CI gas check — they vm.skip without SEPOLIA_RPC_URL (absent in CI) and their gas is
-  fork-block-dependent, so they can't be part of a deterministic gate. They still run locally (.env
-  supplies the RPC) and count toward the 292 total.
+- GAS: forge snapshot → committed .gas-snapshot baseline (204 entries, deterministic tests only).
+  Top-5 production hook functions by avg gas: beforeInitialize 212,967 (one-time/pool),
+  afterAddLiquidity 163,872 (one-time/position), afterRemoveLiquidity 61,922, checkpoint 56,455,
+  afterSwap 46,414 (constant per-swap, O(1) — no LP iteration). Source: forge test --gas-report
+  (per-function; .gas-snapshot is per-test).
+- DETERMINISTIC BASELINE EXCLUSIONS: the gas baseline + CI gas check exclude non-reproducible tests
+  via --no-match-path "test/integration/sepolia/*" --no-match-test "(testFuzz|invariant)".
+  Sepolia fork tests vm.skip without SEPOLIA_RPC_URL (absent in CI) and are fork-block-dependent;
+  fuzz/invariant tests report a MEAN gas that is not byte-reproducible across environments even with
+  the pinned seed=0x1 (corpus cache / platform). The FIRST CI run flaked on four fuzz μ values
+  (1–657 gas drift, all 278 tests passing) — fixed by gating deterministic tests only. Concrete
+  unit + integration tests still cover every production fn with fixed inputs. Excluded tests still
+  run in the test job and count toward 292. `make gas-check` runs the exact CI gate locally;
+  `make snapshot` regenerates with the same filters.
 - CI: .github/workflows/ci.yml gains a gas-snapshot job (forge snapshot --check --no-match-path
   sepolia → fails on any gas increase vs baseline) and a coverage job. Both pinned to Foundry 1.3.5
   + checkout@v4 + recursive submodules (matching the test job; hardened beyond the literal snippet).

@@ -119,9 +119,12 @@ section to docs/coverage-summary.md and pull the top-5 production hook functions
 
 - `forge snapshot` generated `.gas-snapshot` at the repo root — the committed baseline that CI
   compares against on every PR via `forge snapshot --check`.
-- **277 entries** (the 14 Sepolia fork tests are deliberately excluded — see the decision below).
-- Verified: `forge snapshot --check --no-match-path "test/integration/sepolia/*"` exits 0 against
-  the committed baseline (no regression).
+- **204 entries** — the baseline tracks DETERMINISTIC tests only (Sepolia fork + fuzz + invariant
+  tests are excluded — see the decision below).
+- Verified: `forge snapshot --check --no-match-path "test/integration/sepolia/*" --no-match-test
+  "(testFuzz|invariant)"` exits 0 against the committed baseline (no regression).
+- A `make gas-check` target runs the exact same command locally; `make snapshot` regenerates the
+  baseline with the same filters (kept in sync with the CI job).
 
 ### Most expensive snapshot entries (per-test, top 5)
 
@@ -194,26 +197,42 @@ Observations:
 
 ---
 
-## Sepolia Fork Exclusion Decision (and why it's correct)
+## Deterministic-Baseline Decision (and why it's correct)
 
-The 14 Sepolia fork tests under `test/integration/sepolia/*` are **excluded from the committed
-gas-snapshot baseline** (`forge snapshot --no-match-path "test/integration/sepolia/*"`), and the
-CI gas job applies the same exclusion.
+The gas-snapshot baseline tracks **deterministic tests only**. Three categories are excluded
+from both the committed baseline and the CI `--check` gate
+(`--no-match-path "test/integration/sepolia/*" --no-match-test "(testFuzz|invariant)"`):
 
-Why this is correct — not a coverage gap:
+1. **Sepolia fork tests** (`test/integration/sepolia/*`).
+   - They `vm.skip(true, …)` when `SEPOLIA_RPC_URL` is unset. Locally a `.env` supplies the RPC
+     (all 292 run, 0 skipped); CI has no `.env`, so these 14 skip. A baseline including them
+     would never match what CI regenerates.
+   - Their gas is fork-block-dependent (live Sepolia state at the forked block), so the same test
+     yields different gas across runs.
+2. **Fuzz tests** (`testFuzz_*`) and **invariant tests** (`invariant_*`).
+   - The snapshot records a **mean** (μ) gas over random inputs / random call sequences. That mean
+     is **not byte-reproducible across environments** — even with the pinned `seed = "0x1"` in
+     `foundry.toml`, the fuzz corpus cache (gitignored `cache/`) and platform differences shift it.
+   - This is exactly what broke the **first CI run of the gas job**: four fuzz tests drifted by
+     1–657 gas (e.g. `testFuzz_PriceFromTick_MonotonicInTick` μ 12019 vs 12017;
+     `testFuzz_LastKnownInRange_TracksMostRecentTick` μ 493159 vs 493816). All 278 tests passed
+     functionally — it was pure snapshot noise on the fuzz means. The fix was to remove the
+     non-deterministic tests from the gate, not to chase the moving μ.
 
-1. **They `vm.skip` without an RPC.** `SepoliaBaseTest` calls
-   `vm.skip(true, …)` when `SEPOLIA_RPC_URL` is unset. Locally a `.env` supplies the RPC (so all
-   292 tests run, 0 skipped); CI has no `.env`, so these 14 skip. A baseline that includes them
-   would never match what CI regenerates → `forge snapshot --check` would fail on every PR for an
-   environmental reason, not a real regression.
-2. **Their gas is fork-block-dependent.** They run against live Sepolia state at the latest
-   forked block, so the same test yields different gas across runs — fundamentally unsuitable for
-   a deterministic baseline.
+Why this is correct, not a coverage gap: concrete unit tests + integration tests still exercise
+**every production function with fixed inputs**, so a real gas regression in any production
+function surfaces through its deterministic test. The committed baseline (**204 entries**) is
+reproducible byte-for-byte in CI — exactly what a gas-regression gate requires. The excluded tests
+still run in the `test` job (fuzz/invariant always; fork tests where `SEPOLIA_RPC_URL` is set) and
+still count toward the 292 total; they're just not gas-gated.
 
-Net: the committed baseline (277 entries, 278 deterministic tests) is reproducible byte-for-byte
-in CI, which is exactly what a gas-regression gate requires. The fork tests still run locally
-(and in any environment with `SEPOLIA_RPC_URL`) and still count toward the 292 total.
+### Note: `--no-verify` was not the cause of the first CI failure
+
+The push used `git push --no-verify`, but that is unrelated. The `.githooks/pre-push` hook runs
+`forge fmt --check` + `forge build` + `forge test` — it does **not** run `forge snapshot --check`.
+So the hook would have passed (all tests pass) and the CI gas job would have failed regardless.
+The real fix is making the baseline deterministic (above); `make gas-check` now lets you run the
+exact CI gate locally before pushing.
 
 ---
 
@@ -270,19 +289,24 @@ the corrupted "Demo Configuration" header.
 
 1. **Gas source for the production-function table** — used `forge test --gas-report`, not
    `.gas-snapshot` (the snapshot is per-test, not per-function). Documented inline.
-2. **Sepolia fork tests excluded from the baseline + CI gas check** — required for a deterministic
-   gate (skip-without-RPC + fork-block-dependent gas). See the decision section above.
+2. **Non-deterministic tests excluded from the baseline + CI gas check** — Sepolia fork tests
+   (skip-without-RPC + fork-block-dependent) AND fuzz/invariant tests (mean gas not
+   byte-reproducible even with a pinned seed). The fuzz exclusion was added after the first CI run
+   flaked on four fuzz μ values. See the decision section above.
 3. **CI jobs hardened beyond the literal snippet** — checkout@v4 + recursive submodules, pinned
    Foundry 1.3.5, `forge snapshot --check`. These make the jobs actually run and actually gate.
 4. **`.env.example` content cleaned** where the paste arrived corrupted (two headers + two
    reconstructed addresses).
+5. **Makefile** — `snapshot` target now carries the deterministic filters and a `gas-check` target
+   mirrors the CI gate locally (kept in sync with ci.yml).
 
 ---
 
 ## Verification
 
-- `forge snapshot --check --no-match-path "test/integration/sepolia/*"` → exit 0.
-- Full suite: **292 passing, 0 failing** (278 deterministic + 14 Sepolia fork).
+- `make gas-check` (`forge snapshot --check --no-match-path "test/integration/sepolia/*"
+  --no-match-test "(testFuzz|invariant)"`) → exit 0 against the 204-entry baseline.
+- Full suite: **292 passing, 0 failing** (204 deterministic-gated + fuzz/invariant + 14 Sepolia fork).
 - `git check-ignore .env` → ignored; `.env.example` → committable.
 
 ## Remaining

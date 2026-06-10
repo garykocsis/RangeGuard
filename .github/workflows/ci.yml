@@ -48,11 +48,16 @@ jobs:
 
       # --check compares against the committed .gas-snapshot baseline and fails
       # if any function's gas increases — any gas regression is caught on every PR.
-      # The Sepolia fork tests are excluded: they require SEPOLIA_RPC_URL (absent in
-      # CI, so they vm.skip) and their gas is fork-block-dependent, so they must not
-      # be part of a deterministic baseline.
+      # The baseline tracks DETERMINISTIC tests only, so the gate is byte-reproducible:
+      #   - Sepolia fork tests (test/integration/sepolia/*) vm.skip without SEPOLIA_RPC_URL
+      #     (absent in CI) and their gas is fork-block-dependent.
+      #   - Fuzz (testFuzz_*) and invariant (invariant_*) tests report a MEAN gas over
+      #     random inputs; that mean is not byte-reproducible across environments even
+      #     with a pinned fuzz seed (corpus cache / platform), so an exact --check flakes.
+      # Concrete unit + integration tests still exercise every production function with
+      # fixed inputs, so real gas regressions are caught.
       - name: Run gas snapshot
-        run: forge snapshot --check --no-match-path "test/integration/sepolia/*"
+        run: forge snapshot --check --no-match-path "test/integration/sepolia/*" --no-match-test "(testFuzz|invariant)"
 
   coverage:
     name: Coverage Check

@@ -377,18 +377,24 @@ never on mainnet) and `src/base/AbstractPausableReactive.sol` vm/vmOnly ReactVM-
 (resolve only on live Reactive Lasna; structurally unreachable in the Foundry EVM). `coverage/` +
 `lcov.info` added to .gitignore.
 
-GAS — `.gas-snapshot` committed at repo root (277 entries) = the baseline CI checks via `forge
-snapshot --check`. Top-5 production hook fns by avg gas (source: `forge test --gas-report`, since
-.gas-snapshot is per-TEST not per-FUNCTION): beforeInitialize 212,967 (one-time/pool),
-afterAddLiquidity 163,872 (one-time/position), afterRemoveLiquidity 61,922, checkpoint 56,455,
-**afterSwap 46,414** (constant per-swap, O(1), no LP iteration).
+GAS — `.gas-snapshot` committed at repo root (204 entries, DETERMINISTIC tests only) = the baseline
+CI checks via `forge snapshot --check`. Top-5 production hook fns by avg gas (source: `forge test
+--gas-report`, since .gas-snapshot is per-TEST not per-FUNCTION): beforeInitialize 212,967
+(one-time/pool), afterAddLiquidity 163,872 (one-time/position), afterRemoveLiquidity 61,922,
+checkpoint 56,455, **afterSwap 46,414** (constant per-swap, O(1), no LP iteration).
 
-SEPOLIA FORK EXCLUSION (the key gas-baseline gotcha): the 14 `test/integration/sepolia/*` tests are
-EXCLUDED from the baseline + the CI gas check (`--no-match-path "test/integration/sepolia/*"`). They
-`vm.skip` when SEPOLIA_RPC_URL is unset (absent in CI; a local `.env` supplies it, which is why all
-292 run locally with 0 skipped) AND their gas is fork-block-dependent — either alone makes them
-unfit for a deterministic gate. They still run locally and count toward the 292 total. Baseline =
-278 deterministic tests.
+DETERMINISTIC-BASELINE GATE (the key gas-baseline gotcha): the baseline + CI gas check exclude
+non-reproducible tests via `--no-match-path "test/integration/sepolia/*" --no-match-test
+"(testFuzz|invariant)"`. (1) Sepolia fork tests `vm.skip` without SEPOLIA_RPC_URL (absent in CI; a
+local `.env` supplies it, so all 292 run locally with 0 skipped) and are fork-block-dependent. (2)
+Fuzz/invariant tests report a MEAN gas that is NOT byte-reproducible across environments even with
+the pinned `seed = "0x1"` (corpus cache in gitignored `cache/` + platform). The FIRST CI run of the
+gas job flaked on four fuzz μ values (1–657 gas drift; all 278 tests passed functionally) — the fix
+was to gate deterministic tests only, NOT chase the moving μ. NB: `--no-verify` was NOT the cause —
+the pre-push hook runs fmt/build/test, not `forge snapshot --check`, so it can't catch gas drift.
+Use `make gas-check` to run the exact CI gate locally before pushing; `make snapshot` regenerates
+with the same filters (kept in sync with ci.yml). Concrete unit + integration tests still cover
+every production fn; excluded tests still run in the test job + count toward 292.
 
 CI — `.github/workflows/ci.yml` gains `gas-snapshot` (forge snapshot --check, fails on any gas
 increase vs baseline) + `coverage` jobs. Both hardened beyond the literal task snippet to match the
