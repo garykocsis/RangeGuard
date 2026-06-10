@@ -106,8 +106,17 @@ fmt-check:
 clean:
 	forge clean
 
+# Gas baseline tracks DETERMINISTIC tests only (excludes Sepolia fork + fuzz + invariant),
+# so the committed .gas-snapshot is byte-reproducible and CI's `forge snapshot --check` is a
+# reliable gas-regression gate. Keep these flags in sync with .github/workflows/ci.yml.
+GAS_SNAPSHOT_FILTER = --no-match-path "test/integration/sepolia/*" --no-match-test "(testFuzz|invariant)"
+
 snapshot:
-	forge snapshot
+	forge snapshot $(GAS_SNAPSHOT_FILTER)
+
+# Mirror the CI gas gate locally before pushing — fails if any function's gas increased.
+gas-check:
+	forge snapshot --check $(GAS_SNAPSHOT_FILTER)
 
 coverage:
 	forge coverage

@@ -1,5 +1,5 @@
 RangeGuard Project Status
-Last Updated: 2026-06-08 (Session 15 — Google Slides demo deck)
+Last Updated: 2026-06-09 (Session 16 — coverage + gas snapshot)
 How to use this file
 
 The Roadmap is the single source of truth for progress — one checkbox per item.
@@ -14,9 +14,37 @@ invariant; correctness before gas.
 
 Now
 
-Active target: Coverage + gas snapshot (forge coverage / forge snapshot), then the full README
-write-up. All protocol code, deployment, demo tooling, the frontend dashboard, the presentation
-deck, AND the recorded demo are complete.
+Active target: Full README write-up. All protocol code, deployment, demo tooling, the frontend
+dashboard, the presentation deck, the recorded demo, AND the coverage + gas snapshot are complete.
+
+Just completed (Session 16): Coverage report + gas snapshot baseline + CI gating + .env.example.
+- COVERAGE: forge coverage → docs/coverage-summary.md. Total 98.45% lines / 98.51% statements /
+  92.86% branches / 94.23% functions. The two SHIPPED contracts — RangeGuardHook.sol and
+  RangeGuardReactive.sol — are at 100% lines AND 100% functions. The aggregate is below 100% only
+  from intentional non-shippable items: MockUSDC.sol (0%, testnet-only mock) and the vendored
+  AbstractPausableReactive ReactVM-detection branches (resolve only on live Lasna, unreachable in
+  the Foundry EVM). coverage/ + lcov.info gitignored.
+- GAS: forge snapshot → committed .gas-snapshot baseline (204 entries, deterministic tests only).
+  Top-5 production hook functions by avg gas: beforeInitialize 212,967 (one-time/pool),
+  afterAddLiquidity 163,872 (one-time/position), afterRemoveLiquidity 61,922, checkpoint 56,455,
+  afterSwap 46,414 (constant per-swap, O(1) — no LP iteration). Source: forge test --gas-report
+  (per-function; .gas-snapshot is per-test).
+- DETERMINISTIC BASELINE EXCLUSIONS: the gas baseline + CI gas check exclude non-reproducible tests
+  via --no-match-path "test/integration/sepolia/*" --no-match-test "(testFuzz|invariant)".
+  Sepolia fork tests vm.skip without SEPOLIA_RPC_URL (absent in CI) and are fork-block-dependent;
+  fuzz/invariant tests report a MEAN gas that is not byte-reproducible across environments even with
+  the pinned seed=0x1 (corpus cache / platform). The FIRST CI run flaked on four fuzz μ values
+  (1–657 gas drift, all 278 tests passing) — fixed by gating deterministic tests only. Concrete
+  unit + integration tests still cover every production fn with fixed inputs. Excluded tests still
+  run in the test job and count toward 292. `make gas-check` runs the exact CI gate locally;
+  `make snapshot` regenerates with the same filters.
+- CI: .github/workflows/ci.yml gains a gas-snapshot job (forge snapshot --check --no-match-path
+  sepolia → fails on any gas increase vs baseline) and a coverage job. Both pinned to Foundry 1.3.5
+  + checkout@v4 + recursive submodules (matching the test job; hardened beyond the literal snippet).
+- README: 5 shields.io badges below the tagline (tests 292 / coverage 98% / MIT / Sepolia / Lasna).
+- .env.example: copy-to-.env template at repo root with all live deployed addresses; .env confirmed
+  gitignored.
+-> docs/session-16-coverage-gas.md
 
 Just completed (Session 15): Presentation deck + RangeGuard logo, and the recorded 5-minute demo
 (uploaded to YouTube). The deck was REBUILT from the original 9-slide version to a tighter 6-slide
@@ -274,7 +302,10 @@ Reactive contract ✅ (complete — see Completed section / session-10 doc)
       docs/build_deck.py — see docs/session-15-slides.md
 - [x] Recorded 5-minute demo (spec §15) (Session 15): recorded + uploaded to YouTube
       https://www.youtube.com/watch?v=82_9mEh_POM (~3m 53s); linked in README.md
-- [ ] Coverage + gas snapshot (forge coverage / forge snapshot) + full README write-up ← NOW
+- [x] Coverage + gas snapshot (Session 16: `.gas-snapshot` committed baseline + CI gas-regression
+      gate + coverage job; docs/coverage-summary.md — 98.45% lines (core hook + reactive at 100%);
+      afterSwap 46,414 avg gas; README badges; .env.example — see docs/session-16-coverage-gas.md)
+- [ ] Full README write-up ← NOW
 
 Phase 4: Protocol Invariants (cross-cutting)
 
