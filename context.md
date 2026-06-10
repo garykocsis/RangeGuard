@@ -60,7 +60,9 @@ via PoolManager extsload. Deployed on Vercel (auto from main): https://range-gua
 
 Next implementation target:
 
-- Full README write-up (the single remaining roadmap item)
+- NONE — PROJECT COMPLETE. The full README write-up (Session 17) was the last roadmap item; every
+  phase across the build is now shipped. README.md is a comprehensive 13-section document.
+  -> docs/session-17-readme.md
 
 Completed (Session 16): coverage report + committed gas-snapshot baseline + CI gating + .env.example.
 forge coverage → docs/coverage-summary.md: 98.45% lines total, with RangeGuardHook.sol and

@@ -13,7 +13,7 @@ import {Currency} from "v4-core/types/Currency.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {LPFeeLibrary} from "v4-core/libraries/LPFeeLibrary.sol";
 import {ModifyLiquidityParams, SwapParams} from "v4-core/types/PoolOperation.sol";
-import {BalanceDelta, toBalanceDelta} from "v4-core/types/BalanceDelta.sol";
+import {toBalanceDelta} from "v4-core/types/BalanceDelta.sol";
 
 import {BaseRangeGuardTest} from "../shared/BaseRangeGuardTest.t.sol";
 import {RangeGuardHook} from "../../src/RangeGuardHook.sol";
