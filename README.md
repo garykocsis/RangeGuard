@@ -399,6 +399,16 @@ Both pitfalls were diagnosed from on-chain state and are now documented as manda
 - [ ] **`DemoLPRouter.sol` hardening:** Add ERC20 transfer return-value
       checks (currently unchecked — acceptable for MockUSDC testnet
       demo, not production-ready).
+- [ ] **Fee currency reconciliation:** The coverage buffer is denominated
+      in USDC (token1) but swap fees in an ETH/USDC pool are generated
+      in either USDC or ETH depending on swap direction. The MVP handles
+      this by seeding the buffer with real USDC via `seedBuffer()` and
+      accounting for fee contributions in USDC terms — but ETH-denominated
+      fees do not automatically create spendable USDC. A mainnet
+      implementation requires native fee collection plus ETH→USDC
+      conversion (e.g. via a Uniswap swap or Chainlink price feed) so
+      that `bufferBalanceStable` always reflects actual payable USDC
+      reserves rather than notional value.
 
 ### Phase 3 — Production
 
