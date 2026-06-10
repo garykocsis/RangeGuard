@@ -365,7 +365,45 @@ At the start of every session, Claude must:
 
 # Current Session State
 
-Last completed (Session 15): Presentation deck + logo, and the recorded demo (uploaded to YouTube).
+Last completed (Session 16): Coverage report + committed gas-snapshot baseline + CI gating +
+`.env.example`. The ONLY remaining roadmap item is the full README write-up.
+
+COVERAGE — `docs/coverage-summary.md` (and a Production Contract Coverage section): `forge coverage
+--report summary --no-match-coverage "(test|script)/"` → total **98.45% lines** / 98.51% statements
+/ 92.86% branches / 94.23% functions. The two SHIPPED contracts — RangeGuardHook.sol and
+RangeGuardReactive.sol — are at **100% lines AND 100% functions**. The aggregate is below 100% ONLY
+because of intentional non-shippable items: `src/mocks/MockUSDC.sol` (0%, testnet-only ERC-20 mock,
+never on mainnet) and `src/base/AbstractPausableReactive.sol` vm/vmOnly ReactVM-detection branches
+(resolve only on live Reactive Lasna; structurally unreachable in the Foundry EVM). `coverage/` +
+`lcov.info` added to .gitignore.
+
+GAS — `.gas-snapshot` committed at repo root (277 entries) = the baseline CI checks via `forge
+snapshot --check`. Top-5 production hook fns by avg gas (source: `forge test --gas-report`, since
+.gas-snapshot is per-TEST not per-FUNCTION): beforeInitialize 212,967 (one-time/pool),
+afterAddLiquidity 163,872 (one-time/position), afterRemoveLiquidity 61,922, checkpoint 56,455,
+**afterSwap 46,414** (constant per-swap, O(1), no LP iteration).
+
+SEPOLIA FORK EXCLUSION (the key gas-baseline gotcha): the 14 `test/integration/sepolia/*` tests are
+EXCLUDED from the baseline + the CI gas check (`--no-match-path "test/integration/sepolia/*"`). They
+`vm.skip` when SEPOLIA_RPC_URL is unset (absent in CI; a local `.env` supplies it, which is why all
+292 run locally with 0 skipped) AND their gas is fork-block-dependent — either alone makes them
+unfit for a deterministic gate. They still run locally and count toward the 292 total. Baseline =
+278 deterministic tests.
+
+CI — `.github/workflows/ci.yml` gains `gas-snapshot` (forge snapshot --check, fails on any gas
+increase vs baseline) + `coverage` jobs. Both hardened beyond the literal task snippet to match the
+existing test job: checkout@v4 + `submodules: recursive` + Foundry pinned `1.3.5` (gas is
+toolchain-sensitive), and `forge snapshot --check` (not bare `forge sn`, which wouldn't gate).
+
+README — 5 shields.io badges below the tagline: tests 292 / coverage 98% / MIT / Sepolia / Lasna.
+.env.example — copy-to-.env template at repo root with all live deployed addresses (hook 0xFead…a7C0,
+MockUSDC 0x04feCef…428CA, DemoLPRouter 0xEA30…1FEa, PoolManager 0xE03A…3543, reactive 0x5eb9c8C0…Fee1,
+PoolId, position key); `.env` confirmed gitignored.
+-> docs/session-16-coverage-gas.md
+
+---
+
+Previously completed (Session 15): Presentation deck + logo, and the recorded demo (uploaded to YouTube).
 The slides are COMPLETE and the 5-minute demo is RECORDED & UPLOADED:
 https://www.youtube.com/watch?v=82_9mEh_POM (~3m 53s).
 

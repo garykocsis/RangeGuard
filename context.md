@@ -60,7 +60,17 @@ via PoolManager extsload. Deployed on Vercel (auto from main): https://range-gua
 
 Next implementation target:
 
-- Coverage + gas snapshot (forge coverage / forge snapshot), then the full README write-up
+- Full README write-up (the single remaining roadmap item)
+
+Completed (Session 16): coverage report + committed gas-snapshot baseline + CI gating + .env.example.
+forge coverage → docs/coverage-summary.md: 98.45% lines total, with RangeGuardHook.sol and
+RangeGuardReactive.sol both at 100% lines/functions (aggregate held below 100% only by the
+testnet-only MockUSDC mock at 0% and the vendored AbstractPausableReactive ReactVM-detection
+branches, which can't run in the Foundry EVM). forge snapshot → .gas-snapshot baseline (afterSwap
+46,414 avg / constant per-swap; afterAddLiquidity 163,872 / one-time-per-position). The 14 Sepolia
+fork tests are excluded from the baseline + CI gas check (they vm.skip without SEPOLIA_RPC_URL and
+their gas is fork-block-dependent). CI gains gas-snapshot (forge snapshot --check, gas-regression
+gate) + coverage jobs. README badges added. -> docs/session-16-coverage-gas.md
 
 Completed (Session 15): presentation deck + RangeGuard logo, and the recorded 5-minute demo (uploaded
 to YouTube). Deck docs/RangeGuard-Demo-Deck.pptx — 6-slide Google-Slides .pptx (Title / The Solution /

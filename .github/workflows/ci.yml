@@ -31,3 +31,42 @@ jobs:
 
       - name: Run tests
         run: forge test -vvv
+
+  gas-snapshot:
+    name: Gas Snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: "1.3.5"
+
+      # --check compares against the committed .gas-snapshot baseline and fails
+      # if any function's gas increases — any gas regression is caught on every PR.
+      # The Sepolia fork tests are excluded: they require SEPOLIA_RPC_URL (absent in
+      # CI, so they vm.skip) and their gas is fork-block-dependent, so they must not
+      # be part of a deterministic baseline.
+      - name: Run gas snapshot
+        run: forge snapshot --check --no-match-path "test/integration/sepolia/*"
+
+  coverage:
+    name: Coverage Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: "1.3.5"
+
+      - name: Run coverage
+        run: forge coverage --report summary --no-match-coverage "(test|script)/"

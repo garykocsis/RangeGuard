@@ -2,6 +2,10 @@
 cache/
 out/
 
+# Coverage reports (HTML report too large to commit; .gas-snapshot IS committed)
+coverage/
+lcov.info
+
 # Ignores development broadcast logs
 !/broadcast
 /broadcast/*/31337/
